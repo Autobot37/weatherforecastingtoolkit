@@ -1,0 +1,22 @@
+Dataset:
+  name: sevir
+  data_dir: "/home/vatsal/Dataserver/NWM/datasets/sevir"
+  encoded_data_dir: "/home/vatsal/Dataserver/NWM/datasets/preprocessed_vil"
+  seq_len: 25
+  sample_mode: "sequent"
+  stride: 12
+  layout: "NHWT"
+  rescale_method: "01"
+  preprocess: true
+  verbose: false
+  aug_mode: "0"
+  ret_contiguous: true
+  batch_size: 8
+  num_workers: 8
+  seed: 0
+  val_ratio: 0.0
+  start_data: null
+  train_test_split_date: 2019-06-01
+  end_data: null
+
+
