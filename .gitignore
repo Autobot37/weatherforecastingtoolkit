@@ -3,3 +3,4 @@
 *.pt
 *.png
 *.log
+*.wandb
