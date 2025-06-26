@@ -1,8 +1,8 @@
 project_name : "weatherforecasting"
-experiment_name : "pretrained_ae+linear_sevir"
-experiment_path : "experiments/pretrained_ae+linear_sevir"
+experiment_name : "pretrained_ae_convae_sevir"
+experiment_path : "experiments/pretrained_ae_convae_sevir"
 
-Autoencoder:
+autoencoder:
   in_channels: 1
   out_channels: 1
   down_block_types: ['DownEncoderBlock2D', 'DownEncoderBlock2D', 'DownEncoderBlock2D', 'DownEncoderBlock2D']
@@ -13,13 +13,13 @@ Autoencoder:
   norm_num_groups: 32
 
 # dataset
-Dataset:
+dataset:
   name: sevir
   data_dir: "/home/vatsal/Dataserver/NWM/datasets/sevir"
   encoded_data_dir: "/home/vatsal/Dataserver/NWM/datasets/preprocessed_vil"
-  seq_len: 25
+  seq_len: 1
   sample_mode: "sequent"
-  stride: 12
+  stride: 1
   layout: "NHWT"
   rescale_method: "01"
   preprocess: true
@@ -29,22 +29,23 @@ Dataset:
   batch_size: 8
   num_workers: 8
   seed: 0
-  val_ratio: 0.0
+  val_ratio: 0.1
   start_data: null
   train_test_split_date: 2019-06-01
   end_data: null
-  input_frames: 13
-  pred_frames: 12
+  input_frames: 0
+  pred_frames: 1
 
 # optimizer
-lr : 1e-3
-weight_decay : 1e-2
+optim:
+  lr : 1e-4
+  weight_decay : 1e-2
 
 # lr scheduler
 cosine_warmup:
-  start_lr: 1e-4
-  peak_lr: 1e-3
-  final_lr: 1e-6
+  start_lr: 1e-5
+  peak_lr: 1e-4
+  final_lr: 1e-7
   warmup_ratio: 0.1
 
 one_cycle:
@@ -60,13 +61,22 @@ lr_range_test:
 # trainer
 trainer:
   devices: [0]
-  max_epochs: 1
+  max_epochs: 10
   accumulate_grad_batches: 1
-  total_step : -1 # need to be set
-  save_every_n_steps: total_step / 10
+  total_train_steps : -1 # need to be set
+  total_val_steps : -1 # need to be set
+  total_test_steps : -1 # need to be set
+  save_every_n_steps: 0.05
   save_on_train_epoch_end: true
+  limit_train_batches: 0.1
+  limit_val_batches: 0.1
+  limit_test_batches: 0.1
+  log_every_n_steps: 1
 
 # logging
 logging:
-  wandb_watch_log_freq: 
-  log_train_all_metrics_n : (trainer.total_step / trainer.max_epochs) * 20
+  wandb_watch_log_freq: 0.1
+  log_train_all_metrics_n : 0.05
+  log_val_all_metrics_n : 0.05
+  log_train_plots_n : 0.05
+  log_val_plots_n : 0.05

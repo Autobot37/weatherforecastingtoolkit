@@ -13,8 +13,8 @@
 # limitations under the License.
 from torch import nn
 
-from pipeline.modeldefinitions.taming.attention import AttentionBlock
-from pipeline.modeldefinitions.taming.resnet import Downsample2D, ResnetBlock2D, Upsample2D
+from .attention import AttentionBlock
+from .resnet import Downsample2D, ResnetBlock2D, Upsample2D
 
 
 def get_down_block(

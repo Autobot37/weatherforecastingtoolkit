@@ -1,0 +1,82 @@
+project_name : "weatherforecasting"
+experiment_name : "pretrained_ae_linear_sevir"
+experiment_path : "experiments/pretrained_ae_linear_sevir"
+
+autoencoder:
+  in_channels: 1
+  out_channels: 1
+  down_block_types: ['DownEncoderBlock2D', 'DownEncoderBlock2D', 'DownEncoderBlock2D', 'DownEncoderBlock2D']
+  up_block_types: ['UpDecoderBlock2D', 'UpDecoderBlock2D', 'UpDecoderBlock2D', 'UpDecoderBlock2D']
+  block_out_channels: [128, 256, 512, 512]
+  layers_per_block: 2
+  latent_channels: 4
+  norm_num_groups: 32
+
+# dataset
+dataset:
+  name: sevir
+  data_dir: "/home/vatsal/Dataserver/NWM/datasets/sevir"
+  encoded_data_dir: "/home/vatsal/Dataserver/NWM/datasets/preprocessed_vil"
+  seq_len: 25
+  sample_mode: "sequent"
+  stride: 12
+  layout: "NHWT"
+  rescale_method: "01"
+  preprocess: true
+  verbose: false
+  aug_mode: "0"
+  ret_contiguous: true
+  batch_size: 1
+  num_workers: 1
+  seed: 0
+  val_ratio: 0.0
+  start_data: null
+  train_test_split_date: 2019-06-01
+  end_data: null
+  input_frames: 13
+  pred_frames: 12
+
+# optimizer
+optim:
+  lr : 1e-4
+  weight_decay : 1e-2
+
+# lr scheduler
+cosine_warmup:
+  start_lr: 1e-5
+  peak_lr: 1e-4
+  final_lr: 1e-7
+  warmup_ratio: 0.1
+
+one_cycle:
+  peak_lr : 1e-3
+  start_lr: 4e-5
+  final_lr: 4e-7
+  rampup_ratio: 0.3
+
+lr_range_test:
+  max_lr: 1
+  num_iter: 100
+
+# trainer
+trainer:
+  devices: [0]
+  max_epochs: 1
+  accumulate_grad_batches: 1
+  total_train_steps : -1 # need to be set
+  total_val_steps : -1 # need to be set
+  total_test_steps : -1 # need to be set
+  save_every_n_steps: 0.05
+  save_on_train_epoch_end: true
+  limit_train_batches: 0.05
+  limit_val_batches: 0.05
+  limit_test_batches: 0.05
+  log_every_n_steps: 1
+
+# logging
+logging:
+  wandb_watch_log_freq: 0.1
+  log_train_all_metrics_n : 0.05
+  log_val_all_metrics_n : 0.05
+  log_train_plots_n : 0.05
+  log_val_plots_n : 0.05

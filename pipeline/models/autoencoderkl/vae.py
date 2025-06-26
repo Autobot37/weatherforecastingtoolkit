@@ -3,7 +3,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from pipeline.modeldefinitions.taming.unet_2d_blocks import UNetMidBlock2D, get_down_block, get_up_block
+from .unet_2d_blocks import UNetMidBlock2D, get_down_block, get_up_block
 
 
 class Encoder(nn.Module):

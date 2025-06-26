@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 
 from .vae import Encoder, Decoder
-from ..utils.distributions import DiagonalGaussianDistribution
+from .distributions import DiagonalGaussianDistribution
 
 
 class AutoencoderKL(nn.Module):
@@ -79,7 +79,6 @@ class AutoencoderKL(nn.Module):
 
     def encode(self, x: torch.FloatTensor) -> DiagonalGaussianDistribution:
         h = self.encoder(x)
-        assert h.shape[1:] == (512, 3, 3), f"Expected (512, 3, 3), got {h.shape}"
         moments = self.quant_conv(h)
         posterior = DiagonalGaussianDistribution(moments)
         return posterior
