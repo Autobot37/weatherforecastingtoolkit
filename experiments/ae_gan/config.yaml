@@ -11,7 +11,7 @@ lpips:
 # dataset
 dataset:
   name: sevir
-  data_dir: "/home/vatsal/NWM/fast_data/"
+  data_dir: "/home/fastmath/weatherforecasting/sevir_lr"
   seq_len: 25
   sample_mode: "sequent"
   stride: 12

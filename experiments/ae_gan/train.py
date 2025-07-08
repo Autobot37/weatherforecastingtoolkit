@@ -7,7 +7,7 @@ import torch.nn.functional as F
 import pytorch_lightning as pl
 from omegaconf import OmegaConf
 from termcolor import colored
-from pipeline.models.autoencoderkl.losses.contperceptual import LPIPSWithDiscriminator
+from pipeline.models.autoencoderkl.losses.contperceptual import adopt_weight, hinge_d_loss, NLayerDiscriminator, weights_init
 from pipeline.datasets.sevir.sevir import SEVIRLightningDataModule
 from pytorch_lightning.callbacks import LearningRateMonitor
 from pytorch_lightning.loggers import WandbLogger
@@ -15,6 +15,12 @@ from pipeline.helpers import load_checkpoint_cascast, log_gradients_paramater, m
     , adamw_optimizer, cosine_warmup_scheduler, log_metrics, log_wandb_images
 """
 384x384
+rec = l1
+L_adv = -mean(D(x^))
+w_adapt = grad(rec)/grad(l_adv) #to balance both losses
+gen_loss = rec + disc_factor * w_adapt * L_adv
+
+
 """
 
 class ResidualBlock(nn.Module):
@@ -123,13 +129,71 @@ class ConvAutoencoder(nn.Module):
         reconstruction = self.decode(z)
         return reconstruction, z
 
+class Loss(nn.Module):
+    def __init__(self, disc_start, disc_num_layers=3, disc_in_channels=1, disc_weight=1.0, use_actnorm=False):
+        super().__init__()
+        self.disc_start = disc_start
+        self.disc_weight = disc_weight
+
+        self.discriminator = NLayerDiscriminator(
+            input_nc=disc_in_channels,
+            n_layers=disc_num_layers,
+            use_actnorm=use_actnorm
+        ).apply(weights_init)
+
+    def calculate_adaptive_weight(self, rec_loss, disc_loss, last_layer):
+        rec_grad = torch.autograd.grad(rec_loss, last_layer, retain_graph=True)[0]
+        disc_grad = torch.autograd.grad(disc_loss, last_layer, retain_graph=True)[0]
+        d_weight = torch.norm(rec_grad) / (torch.norm(disc_grad) + 1e-4)
+        d_weight = self.disc_weight * d_weight
+        d_weight = torch.clamp(d_weight, 0.0, 1e4).detach()
+        return d_weight
+
+    def forward(self, inputs, reconstructions, opt_idx, last_layer, split, global_step):
+        rec_loss = F.l1_loss(reconstructions, inputs, reduction="mean")
+
+        if global_step < self.disc_start:
+            return rec_loss, {
+                f"{split}/total_loss": rec_loss.detach(),
+                f"{split}/rec_loss": rec_loss.detach,
+                f"{split}/g_loss": torch.tensor(0.0),
+                f"{split}/d_weight": torch.tensor(0.0),
+            }
+
+        if opt_idx == 0:
+            logits_fake = self.discriminator(reconstructions)
+            g_loss = -torch.mean(logits_fake)
+            d_weight = self.calculate_adaptive_weight(rec_loss, g_loss, last_layer)
+            loss = rec_loss + d_weight * g_loss
+            return loss, {
+                f"{split}/total_loss": loss.detach(),
+                f"{split}/rec_loss": rec_loss.detach(),
+                f"{split}/g_loss": g_loss.detach(),
+                f"{split}/d_weight": d_weight.detach(),
+            }
+
+        if opt_idx == 1:
+            logits_real = self.discriminator(inputs.detach())
+            logits_fake = self.discriminator(reconstructions.detach())
+            d_loss = hinge_d_loss(logits_real, logits_fake)
+            return d_loss, {
+                f"{split}/disc_loss": d_loss.detach(),
+                f"{split}/logits_real": logits_real.detach().mean(),
+                f"{split}/logits_fake": logits_fake.detach().mean(),
+            }
+
+
 class Model(pl.LightningModule):
     def __init__(self, cfg):
         super().__init__()
         self.save_hyperparameters(cfg)
         self.cfg = cfg
         self.autoencoder = ConvAutoencoder()
-        self.loss = LPIPSWithDiscriminator(cfg.lpips)
+        self.loss = Loss(cfg.lpips.disc_start, 
+                        disc_num_layers=cfg.lpips.disc_num_layers, 
+                        disc_in_channels=cfg.dataset.in_channels, 
+                        disc_weight=cfg.lpips.disc_weight, 
+                        use_actnorm=cfg.lpips.use_actnorm)
         self.input_frames =  cfg.dataset.input_frames
         self.pred_frames = cfg.dataset.pred_frames
         self.total_steps = cfg.trainer.total_train_steps
@@ -138,7 +202,7 @@ class Model(pl.LightningModule):
 
     def forward(self, x):
         out, posterior = self.autoencoder(x)
-        return out, posterior
+        return out
     
     def get_last_layer(self):
         return self.autoencoder.final_conv.weight
@@ -148,76 +212,70 @@ class Model(pl.LightningModule):
         g_sch, d_sch = self.lr_schedulers()       
 
         inp = batch.permute(0,3,1,2) #[b, c, h, w]
-        pred, posterior = self.autoencoder(inp)
+        pred = self.autoencoder(inp)
 
-        aeloss, log_dict_ae = self.loss()
+        aeloss, log_dict_ae = self.loss(inp, pred, optimizer_idx = 0, last_layer = self.get_last_layer(), split="train", global_step=self.global_step)
+        self.log_dict(log_dict_ae, on_step=True, on_epoch = True, sync_dist=True)
+        aeloss = aeloss / self.accumulate_grad_batches
 
-        self.log('train_loss', loss, prog_bar=True, on_step=True, on_epoch=True, sync_dist=True)
+        self.manual_backward(aeloss)
+        if (batch_idx + 1) % self.accumulate_grad_batches == 0:
+            self.clip_gradients(g_opt, gradient_clip_val=self.cfg.optim.gradient_clip_val)
+            g_opt.step()
+            g_sch.step()
+            g_opt.zero_grad(set_to_none=True)
 
+        #discriminator step
+        discloss, log_dict_disc = self.loss(inp, pred, optimizer_idx = 1, last_layer = self.get_last_layer(), split="train", global_step=self.global_step)
+        self.log_dict(log_dict_disc, on_step=True, on_epoch = True, sync_dist=True)
+        discloss = discloss / self.accumulate_grad_batches
+
+        self.manual_backward(discloss)
+        if (batch_idx + 1) % self.accumulate_grad_batches == 0:
+            self.clip_gradients(d_opt, gradient_clip_val=self.cfg.optim.gradient_clip_val)
+            d_opt.step()
+            d_sch.step()
+            d_opt.zero_grad(set_to_none=True)
+        
         log_interval = int(self.cfg.logging.log_train_all_metrics_n * self.cfg.trainer.total_train_steps)
         if batch_idx % log_interval == 0:
-            pred = pred + inp_t
-            tgt = tgt + inp_t
-
-            decoded_pred = self.autoencoder.decode(pred)
-            decoded_tgt = self.autoencoder.decode(tgt)
-            log_metrics(decoded_pred, decoded_tgt, "train", self)
+            log_metrics(pred.unsqueeze(2), inp.unsqueeze(2), "train", self)
 
         plot_interval = int(self.cfg.logging.log_train_plots_n * self.cfg.trainer.total_train_steps)
         if batch_idx % plot_interval == 0:
-            log_wandb_images(decoded_pred, decoded_tgt, f"Reconstruction vs Original_epoch_{self.current_epoch}_batch_{batch_idx}", self)
-        return loss
+            log_wandb_images(pred, inp, f"Train Reconstruction vs Original_epoch_{self.current_epoch}_batch_{batch_idx}", self)
     
     def validation_step(self, batch, batch_idx):
-        v = batch.permute(0,3,1,2).unsqueeze(2)
-        v = self.autoencoder.encode(v)
-        b, t, c, h, w = v.shape
-        inp, tgt = v[:, :self.input_frames], v[:, self.input_frames:]
-        inp_t = inp[:, -1].unsqueeze(1)
-        inp = inp - inp_t
-        tgt = tgt - inp_t
-        pred = self(inp.reshape(b, self.input_frames * c,  h * w))
-        pred = pred.reshape(b, self.pred_frames, c, h, w)
-        loss = F.mse_loss(pred, tgt)
-        self.log('val_loss', loss, prog_bar=True, on_step=True, on_epoch=True, sync_dist=True)
+        inp = batch.permute(0,3,1,2) #[b, c, h, w]
+        pred = self.autoencoder(inp)
         
-        pred = pred + inp_t
-        tgt = tgt + inp_t
-
-        decoded_pred = self.autoencoder.decode(pred)
-        decoded_tgt = self.autoencoder.decode(tgt)
-
-        log_metrics(decoded_pred, decoded_tgt, "val", self)
+        aeloss, log_dict_ae = self.loss(inp, pred, optimizer_idx = 0, last_layer = self.get_last_layer(), split="val", global_step=self.global_step)
+        self.log_dict(log_dict_ae, on_step=True, on_epoch = True, sync_dist=True)
+        discloss, log_dict_disc = self.loss(inp, pred, optimizer_idx = 1, last_layer = self.get_last_layer(), split="val", global_step=self.global_step)
+        self.log_dict(log_dict_disc, on_step=True, on_epoch = True, sync_dist=True)
+        
+        log_metrics(pred.unsqueeze(2), inp.unsqueeze(2), "val", self)
 
         plot_interval = int(self.cfg.logging.log_val_plots_n * self.cfg.trainer.total_val_steps)
         if batch_idx % plot_interval == 0:
-            log_wandb_images(decoded_pred, decoded_tgt, f"Reconstruction vs Original_epoch_{self.current_epoch}_batch_{batch_idx}", self)
-        return loss
+            log_wandb_images(pred, inp, f"Val_Reconstruction vs Original_epoch_{self.current_epoch}_batch_{batch_idx}", self)
+        return aeloss
 
     def test_step(self, batch, batch_idx):
-        v = batch.permute(0,3,1,2).unsqueeze(2)
-        v = self.autoencoder.encode(v)
-        b, t, c, h, w = v.shape
-        inp, tgt = v[:, :self.input_frames], v[:, self.input_frames:]
-        inp_t = inp[:, -1].unsqueeze(1)
-        inp = inp - inp_t
-        tgt = tgt - inp_t
-        pred = self(inp.reshape(b, self.input_frames, c * h * w)).reshape(b, self.pred_frames, c, h, w)
-        loss = F.mse_loss(pred, tgt)
-        self.log('test_loss', loss, prog_bar=True, on_step=True, on_epoch=True, sync_dist=True)
+        inp = batch.permute(0,3,1,2) #[b, c, h, w]
+        pred = self.autoencoder(inp)
         
-        pred = pred + inp_t
-        tgt = tgt + inp_t
-
-        decoded_pred = self.autoencoder.decode(pred)
-        decoded_tgt = self.autoencoder.decode(tgt)
-
-        log_metrics(decoded_pred, decoded_tgt, "test", self)
+        aeloss, log_dict_ae = self.loss(inp, pred, optimizer_idx = 0, last_layer = self.get_last_layer(), split="test", global_step=self.global_step)
+        self.log_dict(log_dict_ae, on_step=True, on_epoch = True, sync_dist=True)
+        discloss, log_dict_disc = self.loss(inp, pred, optimizer_idx = 1, last_layer = self.get_last_layer(), split="test", global_step=self.global_step)
+        self.log_dict(log_dict_disc, on_step=True, on_epoch = True, sync_dist=True)
+        
+        log_metrics(pred.unsqueeze(2), inp.unsqueeze(2), "test", self)
 
         plot_interval = int(self.cfg.logging.log_val_plots_n * self.cfg.trainer.total_val_steps)
         if batch_idx % plot_interval == 0:
-            log_wandb_images(decoded_pred, decoded_tgt, f"Reconstruction vs Original_epoch_{self.current_epoch}_batch_{batch_idx}_test", self)
-        return loss
+            log_wandb_images(pred, inp, f"Test_Reconstruction vs Original_epoch_{self.current_epoch}_batch_{batch_idx}_test", self)
+        return aeloss
         
     def configure_optimizers(self):
         opt_ae = adamw_optimizer(self.autoencoder, self.cfg.optim.lr, self.cfg.optim.weight_decay)
@@ -230,8 +288,8 @@ class Model(pl.LightningModule):
         warmup_steps = sch_params.warmup_ratio * self.total_steps
         sch_disc = cosine_warmup_scheduler(opt_disc, sch_params.start_lr, sch_params.final_lr, sch_params.peak_lr, self.total_steps, warmup_steps)
         return [
-                {"optimizer": opt_ae, "lr_scheduler": sch_ae},
-                {"optimizer": opt_disc, "lr_scheduler": sch_disc},
+                {"optimizer": opt_ae, "lr_scheduler": {"scheduler": sch_ae, "interval": "step", "frequency": 1}},
+                {"optimizer": opt_disc, "lr_scheduler": {"scheduler": sch_disc, "interval": "step", "frequency": 1}}
             ]
     
 if __name__ == "__main__":

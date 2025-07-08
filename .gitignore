@@ -5,3 +5,4 @@
 *.log
 *.wandb
 **/outputs/
+sevir_lr/
