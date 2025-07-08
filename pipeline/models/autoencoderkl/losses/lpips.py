@@ -6,7 +6,7 @@ from torchvision import models
 from torchvision.models import VGG16_Weights
 from collections import namedtuple
 
-from pipeline.modeldefinitions.taming.losses.util import get_ckpt_path
+from pipeline.models.autoencoderkl.losses.util import get_ckpt_path
 # default_pretrained_metrics_dir = os.path.abspath(os.path.join(default_pretrained_dir, "metrics"))
 
 

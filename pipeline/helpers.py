@@ -226,7 +226,6 @@ def modelcheckpointcallback(run_dir, total_train_steps, save_every_n_steps, save
     return ModelCheckpoint(
         dirpath = os.path.join(run_dir, 'checkpoints'),
         filename = "{epoch}-{step:06d}",
-        save_top_k = 5,
         every_n_train_steps = int(total_train_steps * save_every_n_steps),
         save_on_train_epoch_end = save_on_train_epoch_end
     )

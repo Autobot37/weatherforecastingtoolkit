@@ -1,11 +1,7 @@
-Metadata-Version: 2.1
+Metadata-Version: 2.4
 Name: weatherforecasting
 Version: 0.1.0
 Summary: A deep learning pipeline for weather forecasting research.
-Home-page: UNKNOWN
 Author: bagri
-License: UNKNOWN
-Platform: UNKNOWN
-
-UNKNOWN
-
+Dynamic: author
+Dynamic: summary

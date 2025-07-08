@@ -1086,16 +1086,18 @@ class SEVIRLightningDataModule(LightningDataModule):
         self.ret_contiguous = cfg.ret_contiguous
         self.batch_size = cfg.batch_size
         self.num_workers = cfg.num_workers
+        self.prefetch_factor = cfg.prefetch_factor
+        self.pin_memory = cfg.pin_memory
         self.seed = cfg.seed
 
         self.sevir_dir = cfg.data_dir
     
         self.catalog_path = os.path.join(self.sevir_dir, "CATALOG.csv")
         self.raw_data_dir = os.path.join(self.sevir_dir, "data")
-        self.raw_seq_len = 49
-        self.interval_real_time = 5
-        self.img_height = 384
-        self.img_width = 384
+        self.raw_seq_len = cfg.raw_seq_len
+        self.interval_real_time = cfg.interval_real_time
+        self.img_height = cfg.image_height
+        self.img_width = cfg.image_width
 
         # train val test split
         def _parse_date(date_str):
@@ -1159,19 +1161,19 @@ class SEVIRLightningDataModule(LightningDataModule):
         return DataLoader(self.sevir_train,
                           batch_size=self.batch_size,
                           shuffle=True,
-                          num_workers=self.num_workers, prefetch_factor=2, pin_memory=True)
+                          num_workers=self.num_workers, prefetch_factor=self.prefetch_factor, pin_memory=self.pin_memory)
 
     def val_dataloader(self):
         return DataLoader(self.sevir_val,
                           batch_size=self.batch_size,
                           shuffle=False,
-                          num_workers=self.num_workers, prefetch_factor=2, pin_memory=True)
+                          num_workers=self.num_workers, prefetch_factor=self.prefetch_factor, pin_memory=self.pin_memory)
 
     def test_dataloader(self):
         return DataLoader(self.sevir_test,
                           batch_size=self.batch_size,
                           shuffle=False,
-                          num_workers=self.num_workers, prefetch_factor=2, pin_memory=True)
+                          num_workers=self.num_workers, prefetch_factor=self.prefetch_factor, pin_memory=self.pin_memory)
 
     @property
     def num_train_samples(self):

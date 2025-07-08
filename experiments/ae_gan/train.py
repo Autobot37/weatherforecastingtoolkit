@@ -19,9 +19,8 @@ rec = l1
 L_adv = -mean(D(x^))
 w_adapt = grad(rec)/grad(l_adv) #to balance both losses
 gen_loss = rec + disc_factor * w_adapt * L_adv
-
-
 """
+os.environ['WANDB_API_KEY'] = '041eda3850f131617ee1d1c9714e6230c6ac4772'
 
 class ResidualBlock(nn.Module):
     def __init__(self, in_ch, out_ch, stride=1):
@@ -34,9 +33,6 @@ class ResidualBlock(nn.Module):
         self.conv2 = nn.Conv2d(out_ch, out_ch, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(out_ch)
 
-        # Skip connection path
-        # If stride is not 1 or input/output channels are different, we need to project the skip connection
-        # to match the output dimensions of the main path.
         self.shortcut = nn.Sequential()
         if stride != 1 or in_ch != out_ch:
             self.shortcut = nn.Sequential(
@@ -59,15 +55,10 @@ class ResidualBlock(nn.Module):
         out += shortcut
         return self.act2(out)
 
-
 class UpsampleBlock(nn.Module):
-
     def __init__(self, in_ch, out_ch, scale_factor):
         super().__init__()
-        # Using 'nearest' mode for upsampling avoids checkerboard artifacts that can be
-        # caused by transposed convolutions.
         self.upsample = nn.Upsample(scale_factor=scale_factor, mode='nearest')
-        # After upsampling, we use a residual block to learn and refine features.
         self.resblock = ResidualBlock(in_ch, out_ch, stride=1)
 
     def forward(self, x):
@@ -77,30 +68,28 @@ class ConvAutoencoder(nn.Module):
     def __init__(self, in_ch=1, latent_dim=512):
         super().__init__()
         
-        # Encoder: 384 → 96 → 48 → 24 → 6 → 1
-        self.enc1 = ResidualBlock(in_ch,  64, stride=4)  # 384→96
-        self.enc2 = ResidualBlock(64,    128, stride=2)  # 96→48
-        self.enc3 = ResidualBlock(128,   256, stride=2)  # 48→24
-        self.enc4 = ResidualBlock(256,   512, stride=4)  # 24→6
-        self.enc5 = ResidualBlock(512,  1024, stride=6)  # 6→1
+        # Encoder: 128 → 64 → 32 → 16 → 4 → 1
+        self.enc1 = ResidualBlock(in_ch,   64, stride=2)  # 128 → 64
+        self.enc2 = ResidualBlock(64,     128, stride=2)  # 64 → 32
+        self.enc3 = ResidualBlock(128,    256, stride=2)  # 32 → 16
+        self.enc4 = ResidualBlock(256,    512, stride=4)  # 16 → 4
+        self.enc5 = ResidualBlock(512,   1024, stride=4)  # 4 → 1
 
-        self.flatten = nn.Flatten()             # (B,1024,1,1) → (B,1024)
-        self.fc_enc  = nn.Linear(1024, latent_dim)
+        self.flatten = nn.Flatten()                     # (B,1024,1,1) → (B,1024)
+        self.fc_enc = nn.Linear(1024, latent_dim)
 
-        self.fc_dec  = nn.Linear(latent_dim, 1024)
-        self.unflatten = nn.Unflatten(1, (1024, 1, 1)) # (B,1024) → (B,1024,1,1)
-        
+        self.fc_dec = nn.Linear(latent_dim, 1024)
+        self.unflatten = nn.Unflatten(1, (1024, 1, 1))   # (B,1024) → (B,1024,1,1)
         self.dec_init_conv = ResidualBlock(1024, 1024, stride=1)
 
-        # Decoder: 1 → 6 → 24 → 48 → 96 → 384
-        self.dec1 = UpsampleBlock(1024, 512, scale_factor=6)  # 1→6
-        self.dec2 = UpsampleBlock(512,  256, scale_factor=4)  # 6→24
-        self.dec3 = UpsampleBlock(256,  128, scale_factor=2)  # 24→48
-        self.dec4 = UpsampleBlock(128,   64, scale_factor=2)  # 48→96
+        # Decoder: 1 → 4 → 16 → 32 → 64 → 128
+        self.dec1 = UpsampleBlock(1024, 512, scale_factor=4)  # 1 → 4
+        self.dec2 = UpsampleBlock(512,  256, scale_factor=4)  # 4 → 16
+        self.dec3 = UpsampleBlock(256,  128, scale_factor=2)  # 16 → 32
+        self.dec4 = UpsampleBlock(128,   64, scale_factor=2)  # 32 → 64
         
-        self.final_upsample = nn.Upsample(scale_factor=4, mode='nearest') # 96→384
+        self.final_upsample = nn.Upsample(scale_factor=2, mode='nearest') # 64 → 128
         self.final_conv = nn.Conv2d(64, in_ch, kernel_size=3, stride=1, padding=1)
-
 
     def encode(self, x):
         x = self.enc1(x)
@@ -149,37 +138,37 @@ class Loss(nn.Module):
         d_weight = torch.clamp(d_weight, 0.0, 1e4).detach()
         return d_weight
 
-    def forward(self, inputs, reconstructions, opt_idx, last_layer, split, global_step):
+    def forward(self, inputs, reconstructions, optimizer_idx, last_layer, split, global_step):
         rec_loss = F.l1_loss(reconstructions, inputs, reduction="mean")
 
         if global_step < self.disc_start:
             return rec_loss, {
-                f"{split}/total_loss": rec_loss.detach(),
-                f"{split}/rec_loss": rec_loss.detach,
-                f"{split}/g_loss": torch.tensor(0.0),
-                f"{split}/d_weight": torch.tensor(0.0),
+            f"{split}/total_loss": rec_loss.detach().cpu(),
+            f"{split}/rec_loss": rec_loss.detach().cpu(),
+            f"{split}/g_loss": torch.tensor(0.0).cpu(),
+            f"{split}/d_weight": torch.tensor(0.0).cpu(),
             }
 
-        if opt_idx == 0:
+        if optimizer_idx == 0:
             logits_fake = self.discriminator(reconstructions)
             g_loss = -torch.mean(logits_fake)
             d_weight = self.calculate_adaptive_weight(rec_loss, g_loss, last_layer)
             loss = rec_loss + d_weight * g_loss
             return loss, {
-                f"{split}/total_loss": loss.detach(),
-                f"{split}/rec_loss": rec_loss.detach(),
-                f"{split}/g_loss": g_loss.detach(),
-                f"{split}/d_weight": d_weight.detach(),
+            f"{split}/total_loss": loss.detach().cpu(),
+            f"{split}/rec_loss": rec_loss.detach().cpu(),
+            f"{split}/g_loss": g_loss.detach().cpu(),
+            f"{split}/d_weight": d_weight.detach().cpu(),
             }
 
-        if opt_idx == 1:
+        if optimizer_idx == 1:
             logits_real = self.discriminator(inputs.detach())
             logits_fake = self.discriminator(reconstructions.detach())
             d_loss = hinge_d_loss(logits_real, logits_fake)
             return d_loss, {
-                f"{split}/disc_loss": d_loss.detach(),
-                f"{split}/logits_real": logits_real.detach().mean(),
-                f"{split}/logits_fake": logits_fake.detach().mean(),
+            f"{split}/disc_loss": d_loss.detach().cpu(),
+            f"{split}/logits_real": logits_real.detach().mean().cpu(),
+            f"{split}/logits_fake": logits_fake.detach().mean().cpu(),
             }
 
 
@@ -191,12 +180,13 @@ class Model(pl.LightningModule):
         self.autoencoder = ConvAutoencoder()
         self.loss = Loss(cfg.lpips.disc_start, 
                         disc_num_layers=cfg.lpips.disc_num_layers, 
-                        disc_in_channels=cfg.dataset.in_channels, 
+                        disc_in_channels=cfg.lpips.disc_in_channels, 
                         disc_weight=cfg.lpips.disc_weight, 
                         use_actnorm=cfg.lpips.use_actnorm)
         self.input_frames =  cfg.dataset.input_frames
         self.pred_frames = cfg.dataset.pred_frames
         self.total_steps = cfg.trainer.total_train_steps
+        self.accumulate_grad_batches = cfg.trainer.accumulate_grad_batches
 
         self.automatic_optimization = False
 
@@ -212,7 +202,7 @@ class Model(pl.LightningModule):
         g_sch, d_sch = self.lr_schedulers()       
 
         inp = batch.permute(0,3,1,2) #[b, c, h, w]
-        pred = self.autoencoder(inp)
+        pred = self(inp)
 
         aeloss, log_dict_ae = self.loss(inp, pred, optimizer_idx = 0, last_layer = self.get_last_layer(), split="train", global_step=self.global_step)
         self.log_dict(log_dict_ae, on_step=True, on_epoch = True, sync_dist=True)
@@ -247,8 +237,8 @@ class Model(pl.LightningModule):
     
     def validation_step(self, batch, batch_idx):
         inp = batch.permute(0,3,1,2) #[b, c, h, w]
-        pred = self.autoencoder(inp)
-        
+        pred = self(inp)
+
         aeloss, log_dict_ae = self.loss(inp, pred, optimizer_idx = 0, last_layer = self.get_last_layer(), split="val", global_step=self.global_step)
         self.log_dict(log_dict_ae, on_step=True, on_epoch = True, sync_dist=True)
         discloss, log_dict_disc = self.loss(inp, pred, optimizer_idx = 1, last_layer = self.get_last_layer(), split="val", global_step=self.global_step)
@@ -259,11 +249,10 @@ class Model(pl.LightningModule):
         plot_interval = int(self.cfg.logging.log_val_plots_n * self.cfg.trainer.total_val_steps)
         if batch_idx % plot_interval == 0:
             log_wandb_images(pred, inp, f"Val_Reconstruction vs Original_epoch_{self.current_epoch}_batch_{batch_idx}", self)
-        return aeloss
 
     def test_step(self, batch, batch_idx):
         inp = batch.permute(0,3,1,2) #[b, c, h, w]
-        pred = self.autoencoder(inp)
+        pred = self(inp)
         
         aeloss, log_dict_ae = self.loss(inp, pred, optimizer_idx = 0, last_layer = self.get_last_layer(), split="test", global_step=self.global_step)
         self.log_dict(log_dict_ae, on_step=True, on_epoch = True, sync_dist=True)
@@ -328,6 +317,7 @@ if __name__ == "__main__":
         cfg.trainer.total_val_steps = total_val_steps * cfg.trainer.limit_val_batches
     if cfg.trainer.limit_test_batches is not None:
         cfg.trainer.total_test_steps = total_test_steps * cfg.trainer.limit_test_batches
+    cfg.lpips.disc_start = int(cfg.lpips.disc_start * cfg.trainer.total_train_steps)
 
     logger = WandbLogger(project = cfg.project_name, name = cfg.experiment_name, save_dir = os.path.join(cfg.experiment_path, 'outputs'), id = run_id, resume = "allow")
     run_id = logger.experiment.id
@@ -341,15 +331,13 @@ if __name__ == "__main__":
     
     trainer = pl.Trainer(
         max_epochs=cfg.trainer.max_epochs, 
-        accelerator='gpu', 
-        devices=cfg.trainer.devices,
-        gradient_clip_val=1.0,
-        callbacks=[checkpoint_callback, lr_monitor_callback],
+        accelerator='cpu', 
+        # devices=cfg.trainer.devices,
+        callbacks=[checkpoint_callback, lr_monitor_callback, TrackGradNormCallback()],
         logger=logger,
         limit_train_batches=cfg.trainer.limit_train_batches,
         limit_val_batches=cfg.trainer.limit_val_batches,
         limit_test_batches=cfg.trainer.limit_test_batches,
-        accumulate_grad_batches=cfg.trainer.accumulate_grad_batches,
         log_every_n_steps=cfg.trainer.log_every_n_steps,
     )
 
