@@ -226,8 +226,22 @@ def modelcheckpointcallback(run_dir, total_train_steps, save_every_n_steps, save
     return ModelCheckpoint(
         dirpath = os.path.join(run_dir, 'checkpoints'),
         filename = "{epoch}-{step:06d}",
-        save_top_k = 1,
+        save_top_k = 5,
         every_n_train_steps = int(total_train_steps * save_every_n_steps),
         save_on_train_epoch_end = save_on_train_epoch_end
     )
-    
+import pytorch_lightning as pl
+class TrackGradNormCallback(pl.Callback):
+    def __init__(self, norm_type=2):
+        super().__init__()
+        self.norm_type = norm_type
+
+    def on_after_backward(self, trainer, pl_module):
+        total_norm = 0.0
+        for p in pl_module.parameters():
+            if p.grad is not None:
+                param_norm = p.grad.data.norm(self.norm_type)
+                total_norm += param_norm.item() ** self.norm_type
+        total_norm = total_norm ** (1. / self.norm_type)
+        if isinstance(trainer.logger, WandbLogger):
+            trainer.logger.experiment.log({"grad_norm": total_norm, "global_step": trainer.global_step})

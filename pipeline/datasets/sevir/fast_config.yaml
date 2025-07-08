@@ -1,7 +1,6 @@
 Dataset:
   name: sevir
-  data_dir: "/home/vatsal/Dataserver/NWM/datasets/sevir"
-  encoded_data_dir: "/home/vatsal/Dataserver/NWM/datasets/preprocessed_vil"
+  data_dir: "/home/vatsal/NWM/fast_data"
   seq_len: 25
   sample_mode: "sequent"
   stride: 12

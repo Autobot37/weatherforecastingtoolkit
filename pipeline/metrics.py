@@ -83,7 +83,7 @@ def psnr(pred, target):
         total += cal(p[i:i+1], g[i:i+1]).item()
     return float(total / p.shape[0])
 
-def calc_metrics(pred, target, tag = 'train'):
+def calc_metrics(pred, target):
     """
     pred and target shape == (b, t, c, h, w) in [0, 1] range.
     """
@@ -126,7 +126,6 @@ def calc_metrics(pred, target, tag = 'train'):
         results[f'paper_CSI_219_{pool_name}'] = results[f'CSI_5{suffix}']
         results[f'paper_HSS_{pool_name}'] = float(np.mean(hss_vals))
     
-    results = {f'{tag}_{k}': v for k, v in results.items()}
     return results
 
 if __name__ == '__main__':

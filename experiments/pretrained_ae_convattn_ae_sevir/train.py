@@ -199,7 +199,7 @@ class Model(pl.LightningModule):
 
         plot_interval = int(self.cfg.logging.log_train_plots_n * self.cfg.trainer.total_train_steps)
         if batch_idx % plot_interval == 0:
-            log_wandb_images(decoded_pred, inp, f"Reconstruction vs Original_epoch_{self.current_epoch}_batch_{batch_idx}", self)
+            log_wandb_images(decoded_pred, inp, f"Train_Reconstruction vs Original_epoch_{self.current_epoch}_batch_{batch_idx}", self)
         return loss
     
     def validation_step(self, batch, batch_idx):
@@ -218,7 +218,7 @@ class Model(pl.LightningModule):
 
         plot_interval = int(self.cfg.logging.log_val_plots_n * self.cfg.trainer.total_val_steps)
         if batch_idx % plot_interval == 0:
-            log_wandb_images(decoded_pred, inp, f"Reconstruction vs Original_epoch_{self.current_epoch}_batch_{batch_idx}", self)
+            log_wandb_images(decoded_pred, inp, f"Val_Reconstruction vs Original_epoch_{self.current_epoch}_batch_{batch_idx}", self)
         return loss
 
     def configure_optimizers(self):
@@ -234,12 +234,10 @@ class Model(pl.LightningModule):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--resume", type=str, default=None)
+    parser.add_argument("--run_id", type=str, default=None)
     args = parser.parse_args()
     resume_ckpt = args.resume
-    run_id = None
-    if resume_ckpt is not None:
-        run_id = resume_ckpt.split("/")[-4].split("-")[-1]
-        print(colored(f"Resuming from checkpoint: {resume_ckpt} with run_id: {run_id}", "green"))
+    run_id = args.run_id
 
     torch.backends.cudnn.benchmark = True 
     torch.set_float32_matmul_precision('high')
@@ -295,5 +293,5 @@ if __name__ == "__main__":
     model = Model(cfg)
     log_gradients_paramater(model, cfg.trainer.total_train_steps, cfg.logging.wandb_watch_log_freq, logger)
 
-    trainer.fit(model, dm, ckpt_path=resume_ckpt)
+    trainer.fit(model, dm)
     print("done")

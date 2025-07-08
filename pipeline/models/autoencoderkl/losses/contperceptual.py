@@ -110,8 +110,11 @@ class LPIPSWithDiscriminator(nn.Module):
             weighted_nll_loss = weights*nll_loss
         weighted_nll_loss = torch.sum(weighted_nll_loss) / batch_size
         nll_loss = torch.sum(nll_loss) / batch_size
-        kl_loss = posteriors.kl()
-        kl_loss = torch.sum(kl_loss) / batch_size
+        if hasattr(posteriors, "kl") and callable(posteriors.kl):
+            kl_loss = posteriors.kl()
+            kl_loss = torch.sum(kl_loss) / batch_size
+        else:
+            kl_loss = torch.tensor(0.0, device=inputs.device)
 
         # now the GAN part
         if optimizer_idx == 0:

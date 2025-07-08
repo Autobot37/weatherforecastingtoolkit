@@ -5,13 +5,13 @@ import time
 from tqdm import tqdm
 
 def main():
-    cfg = OmegaConf.load("pipeline/datasets/sevir/config.yaml").Dataset
+    cfg = OmegaConf.load("pipeline/datasets/sevir/fast_config.yaml").Dataset
 
     data_module = SEVIRLightningDataModule(cfg=cfg)
     data_module.setup()
     train_loader = data_module.train_dataloader()
     
-    print("profiling for slow dataset")
+    print("profiling for dataset")
     start_time = time.time()
     idx = 0
     total = len(train_loader)
@@ -54,4 +54,8 @@ Dataset:
 
 on test_loader
 1000 batches tool 10 minutes.
+"""
+
+"""
+
 """

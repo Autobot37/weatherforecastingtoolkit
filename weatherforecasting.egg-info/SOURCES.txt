@@ -1,13 +1,12 @@
 README.md
 setup.py
 pipeline/__init__.py
-pipeline/basemodel.py
+pipeline/helpers.py
 pipeline/metrics.py
-pipeline/utils.py
 pipeline/datasets/__init__.py
-pipeline/datasets/sevir.py
 pipeline/models/__init__.py
-pipeline/models/linear.py
+pipeline/models/alphapre/__init__.py
+pipeline/models/alphapre/alpha.py
 weatherforecasting.egg-info/PKG-INFO
 weatherforecasting.egg-info/SOURCES.txt
 weatherforecasting.egg-info/dependency_links.txt

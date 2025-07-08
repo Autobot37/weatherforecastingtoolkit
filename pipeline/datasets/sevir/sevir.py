@@ -1118,7 +1118,7 @@ class SEVIRLightningDataModule(LightningDataModule):
                 sevir_data_dir=self.raw_data_dir,
                 raw_seq_len=self.raw_seq_len,
                 split_mode="uneven",
-                shuffle=False,
+                shuffle=True,
                 seq_len=self.seq_len,
                 stride=self.stride,
                 sample_mode=self.sample_mode,
