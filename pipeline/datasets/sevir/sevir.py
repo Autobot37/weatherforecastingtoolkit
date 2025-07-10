@@ -1087,9 +1087,9 @@ class SEVIRLightningDataModule(LightningDataModule):
         self.batch_size = cfg.batch_size
         self.num_workers = cfg.num_workers
         self.prefetch_factor = cfg.prefetch_factor
-        self.pin_memory = cfg.pin_memory
+        self.pin_memory = cfg.pin_memory 
         self.seed = cfg.seed
-
+    
         self.sevir_dir = cfg.data_dir
     
         self.catalog_path = os.path.join(self.sevir_dir, "CATALOG.csv")
@@ -1120,7 +1120,7 @@ class SEVIRLightningDataModule(LightningDataModule):
                 sevir_data_dir=self.raw_data_dir,
                 raw_seq_len=self.raw_seq_len,
                 split_mode="uneven",
-                shuffle=True,
+                shuffle=False,
                 seq_len=self.seq_len,
                 stride=self.stride,
                 sample_mode=self.sample_mode,

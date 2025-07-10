@@ -7,7 +7,11 @@ from torchvision.models import VGG16_Weights
 from collections import namedtuple
 
 from pipeline.models.autoencoderkl.losses.util import get_ckpt_path
-# default_pretrained_metrics_dir = os.path.abspath(os.path.join(default_pretrained_dir, "metrics"))
+import os
+default_pretrained_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "pretrained"))
+if not os.path.exists(default_pretrained_dir):
+    os.makedirs(default_pretrained_dir)
+default_pretrained_metrics_dir = os.path.abspath(os.path.join(default_pretrained_dir, "metrics"))
 
 
 class LPIPS(nn.Module):

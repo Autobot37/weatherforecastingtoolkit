@@ -89,6 +89,8 @@ def calc_metrics(pred, target):
     """
     pred = pred.detach()
     target = target.detach()
+    pred = pred.clamp(0, 1)
+    target = target.clamp(0, 1)
     single = pred.mean(dim=1) if pred.ndim == 6 else pred
     results = {}
     

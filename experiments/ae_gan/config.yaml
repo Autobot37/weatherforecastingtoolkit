@@ -1,19 +1,19 @@
-project_name : "test"
-experiment_name : "ae_gan"
+project_name : "ae_gan"
+experiment_name : "ae_attn_512"
 experiment_path : "experiments/ae_gan"
   
 lpips:
-  disc_start: 0.3
-  disc_weight: 1.0
-  perceptual_weight: 0.0
+  disc_start: 0.0
+  disc_weight: 0.0
   disc_in_channels: 1
   disc_num_layers: 3
   use_actnorm: false
+  perceptual_weight: 0.0
 
 # dataset
 dataset:
   name: sevir
-  data_dir: "/teamspace/studios/this_studio/sevir_lr"
+  data_dir: "/home/vatsal/NWM/sevir_lr"
   seq_len: 1
   sample_mode: "sequent"
   stride: 1
@@ -23,10 +23,10 @@ dataset:
   verbose: false
   aug_mode: "0"
   ret_contiguous: true
-  batch_size: 8
-  num_workers: 0
-  prefetch_factor: null
-  pin_memory: False #change here pansy
+  batch_size: 16
+  num_workers: 4
+  prefetch_factor: 2
+  pin_memory: true
 
   seed: 0
   val_ratio: 0.1
@@ -44,13 +44,14 @@ dataset:
 # optimizer
 optim:
   lr : 1e-4
-  weight_decay : 1e-2
+  weight_decay : 1e-3
+  gradient_clip_val : 1.0
 
 # lr scheduler
 cosine_warmup:
   start_lr: 1e-5
   peak_lr: 1e-4
-  final_lr: 1e-7
+  final_lr: 1e-6
   warmup_ratio: 0.1
 
 one_cycle:
@@ -66,21 +67,21 @@ lr_range_test:
 # trainer
 trainer:
   devices: [0]
-  max_epochs: 10
+  max_epochs: 50
   accumulate_grad_batches: 1
   total_train_steps : -1 # need to be set
   total_val_steps : -1 # need to be set
   total_test_steps : -1 # need to be set
-  save_every_n_steps: 0.05
+  save_every_n_steps: 0.1
   save_on_train_epoch_end: true
-  limit_train_batches: 0.5
-  limit_val_batches: 0.5
-  limit_test_batches: 0.5
+  limit_train_batches: 0.1
+  limit_val_batches: 0.1
+  limit_test_batches: 0.1
   log_every_n_steps: 1
 
 # logging
 logging:
   wandb_watch_log_freq: 0
   log_train_all_metrics_n : 0.01
-  log_train_plots_n : 0.001
-  log_val_plots_n : 0.001
+  log_train_plots_n : 0.1
+  log_val_plots_n : 0.1

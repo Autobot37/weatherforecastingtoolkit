@@ -5,6 +5,7 @@ from torch_lr_finder import LRFinder, TrainDataLoaderIter, ValDataLoaderIter
 import os
 from pipeline.metrics import calc_metrics
 from pytorch_lightning.loggers import WandbLogger
+import pytorch_lightning as pl
 import wandb
 import matplotlib.pyplot as plt
 from pytorch_lightning.callbacks import ModelCheckpoint
@@ -69,7 +70,7 @@ def adamw_optimizer(model, lr, weight_decay):
     if using another regularization like dropout and data augmentations then still needed 
     since dropout forces more robustness and data augmentations forces invariance.
     """
-    return torch.optim.AdamW(model.parameters(), lr = lr, weight_decay = weight_decay)
+    return torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
 
 def cosine_warmup_scheduler(opt, start_lr, final_lr, peak_lr, total_steps, warmup_steps):
     """
@@ -83,7 +84,7 @@ def cosine_warmup_scheduler(opt, start_lr, final_lr, peak_lr, total_steps, warmu
     """
     for param_group in opt.param_groups:
         if param_group['lr'] != peak_lr:
-            print(colored(f"lr of {param_group['name']} is not peak lr, it is {param_group['lr']} changing to {peak_lr}", 'red'))
+            print(colored(f"lr is not peak lr, it is {param_group['lr']} changing to {peak_lr}", 'red'))
             param_group['lr'] = peak_lr
 
     warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
@@ -227,9 +228,9 @@ def modelcheckpointcallback(run_dir, total_train_steps, save_every_n_steps, save
         dirpath = os.path.join(run_dir, 'checkpoints'),
         filename = "{epoch}-{step:06d}",
         every_n_train_steps = int(total_train_steps * save_every_n_steps),
-        save_on_train_epoch_end = save_on_train_epoch_end
+        save_on_train_epoch_end = save_on_train_epoch_end,
+        save_top_k=-1,
     )
-import pytorch_lightning as pl
 class TrackGradNormCallback(pl.Callback):
     def __init__(self, norm_type=2):
         super().__init__()
