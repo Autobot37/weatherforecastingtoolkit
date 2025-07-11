@@ -38,7 +38,7 @@ class Loss(nn.Module):
         self.perceptual_weight = perceptual_weight
 
         self.logvar = nn.Parameter(torch.ones(size=()) * logvar_init)
-
+        self.kl_weight = kl_weight
 
     def calculate_adaptive_weight(self, nll_loss, disc_loss, last_layer):
         nll_grad = torch.autograd.grad(nll_loss, last_layer, retain_graph=True)[0]
@@ -110,8 +110,21 @@ class Model(pl.LightningModule):
         super().__init__()
         self.save_hyperparameters(cfg)
         self.cfg = cfg
-        self.autoencoder = AutoencoderKL(in_channels=1, out_channels=1, latent_channels=512, down_block_types=("DownEncoderBlock2d") * 4, 
-                                        up_block_types=("UpDecoderBlock2d") * 4, block_out_channels=(64, 128, 256, 512))
+        down_block_types = (
+            "DownEncoderBlock2D",
+            "DownEncoderBlock2D",
+            "DownEncoderBlock2D",
+            "DownEncoderBlock2D",
+            "DownEncoderBlock2D",
+        )
+        up_block_types = (
+            "UpDecoderBlock2D",
+            "UpDecoderBlock2D",
+            "UpDecoderBlock2D",
+            "UpDecoderBlock2D",
+            "UpDecoderBlock2D",
+        )
+        self.autoencoder = AutoencoderKL(in_channels=1, out_channels=1, latent_channels=512, block_out_channels=(64, 128, 256, 512, 512), sample_size=128, down_block_types=down_block_types, up_block_types=up_block_types)
 
         self.loss = Loss(cfg.lpips.disc_start, 
                         disc_num_layers=cfg.lpips.disc_num_layers, 
@@ -323,7 +336,6 @@ if __name__ == "__main__":
         limit_val_batches=cfg.trainer.limit_val_batches,
         limit_test_batches=cfg.trainer.limit_test_batches,
         log_every_n_steps=cfg.trainer.log_every_n_steps,
-        fast_dev_run=True
     )
 
     model = Model(cfg)
