@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-PYTHON_SCRIPT="/home/vatsal/NWM/weatherforecasting/experiments/test/train.py"
+PYTHON_SCRIPT="/home/vatsal/NWM/weatherforecasting/experiments/ae_gan_kl/train.py"
 SUCCESS_MARKER="done"
 RESUME_FLAG="--resume"
 RESUME=true
@@ -48,10 +48,8 @@ run_with_retry() {
 }
 
 declare -a RUNS=(
-    "experiment_name=ae_conv2_disc_1_lt_128 model.name=convautoencoder2 lpips.disc_start=1.0 lpips.disc_weight=0.0 ConvAutoencoder2.latent_dim=128"
-    "experiment_name=ae_conv2_disc_1_lt_256 model.name=convautoencoder2 lpips.disc_start=1.0 lpips.disc_weight=0.0 ConvAutoencoder2.latent_dim=256"
-    "experiment_name=ae_attn_disc_0_lt_512 model.name=attentionchargedautoencoder lpips.disc_start=0.0 lpips.disc_weight=1.0 AttentionChargedAutoencoder.latent_dim=512"
-    "experiment_name=ae_attn_disc_1_lt_512 model.name=attentionchargedautoencoder lpips.disc_start=1.0 lpips.disc_weight=0.0 AttentionChargedAutoencoder.latent_dim=512"
+    "experiment_name=ae_gan_kl",
+    "experiment_name=ae_gan_kl_disc_1 lpips.disc_start=0.0 lpips.disc_weight=1.0",
 )
 
 for config in "${RUNS[@]}"; do

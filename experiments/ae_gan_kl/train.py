@@ -11,6 +11,7 @@ from pipeline.models.autoencoderkl.losses.contperceptual import adopt_weight, hi
 from pipeline.datasets.sevire.sevir import SEVIRLightningDataModule
 from pytorch_lightning.callbacks import LearningRateMonitor
 from pytorch_lightning.loggers import WandbLogger
+from pipeline.models.autoencoderkl.custom_akl import AutoencoderKL
 from pipeline.helpers import load_checkpoint_cascast, log_gradients_paramater, modelcheckpointcallback, TrackGradNormCallback \
     , adamw_optimizer, cosine_warmup_scheduler, log_metrics, log_wandb_images, check_yaml
 """
@@ -20,221 +21,9 @@ L_adv = -mean(D(x^))
 w_adapt = grad(rec)/grad(l_adv) #to balance both losses
 gen_loss = rec + disc_factor * w_adapt * L_adv
 """
-os.environ['WANDB_API_KEY'] = '041eda3850f131617ee1d1c9714e6230c6ac4772'
-
-class ResidualBlock(nn.Module):
-    def __init__(self, in_ch, out_ch, stride=1):
-        super().__init__()
-        
-        self.conv1 = nn.Conv2d(in_ch, out_ch, kernel_size=3, stride=stride, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(out_ch)
-        self.act1 = nn.GELU()
-        
-        self.conv2 = nn.Conv2d(out_ch, out_ch, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn2 = nn.BatchNorm2d(out_ch)
-
-        self.shortcut = nn.Sequential()
-        if stride != 1 or in_ch != out_ch:
-            self.shortcut = nn.Sequential(
-                nn.Conv2d(in_ch, out_ch, kernel_size=1, stride=stride, bias=False),
-                nn.BatchNorm2d(out_ch)
-            )
-            
-        self.act2 = nn.GELU()
-
-    def forward(self, x):
-        shortcut = self.shortcut(x)
-        
-        out = self.conv1(x)
-        out = self.bn1(out)
-        out = self.act1(out)
-        
-        out = self.conv2(out)
-        out = self.bn2(out)
-        
-        out += shortcut
-        return self.act2(out)
-
-class UpsampleBlock(nn.Module):
-    def __init__(self, in_ch, out_ch, scale_factor):
-        super().__init__()
-        self.upsample = nn.Upsample(scale_factor=scale_factor, mode='nearest')
-        self.resblock = ResidualBlock(in_ch, out_ch, stride=1)
-
-    def forward(self, x):
-        return self.resblock(self.upsample(x))
-
-class ConvAutoencoder(nn.Module):
-    def __init__(self, in_ch=1, latent_dim=1024):
-        super().__init__()
-        
-        # Encoder: 128 → 64 → 32 → 16 → 4 → 1
-        self.enc1 = ResidualBlock(in_ch,   64, stride=2)  # 128 → 64
-        self.enc2 = ResidualBlock(64,     128, stride=2)  # 64 → 32
-        self.enc3 = ResidualBlock(128,    256, stride=2)  # 32 → 16
-        self.enc4 = ResidualBlock(256,    512, stride=4)  # 16 → 4
-        self.enc5 = ResidualBlock(512,   1024, stride=4)  # 4 → 1
-
-        self.flatten = nn.Flatten()                     # (B,1024,1,1) → (B,1024)
-        self.fc_enc = nn.Linear(1024, latent_dim)
-
-        self.fc_dec = nn.Linear(latent_dim, 1024)
-        self.unflatten = nn.Unflatten(1, (1024, 1, 1))   # (B,1024) → (B,1024,1,1)
-        self.dec_init_conv = ResidualBlock(1024, 1024, stride=1)
-
-        # Decoder: 1 → 4 → 16 → 32 → 64 → 128
-        self.dec1 = UpsampleBlock(1024, 512, scale_factor=4)  # 1 → 4
-        self.dec2 = UpsampleBlock(512,  256, scale_factor=4)  # 4 → 16
-        self.dec3 = UpsampleBlock(256,  128, scale_factor=2)  # 16 → 32
-        self.dec4 = UpsampleBlock(128,   64, scale_factor=2)  # 32 → 64
-        
-        self.final_upsample = nn.Upsample(scale_factor=2, mode='nearest') # 64 → 128
-        self.final_conv = nn.Conv2d(64, in_ch, kernel_size=3, stride=1, padding=1)
-
-    def encode(self, x):
-        x = self.enc1(x)
-        x = self.enc2(x)
-        x = self.enc3(x)
-        x = self.enc4(x)
-        x = self.enc5(x)
-        x = self.flatten(x)
-        z = self.fc_enc(x)
-        return z
-
-    def decode(self, z):
-        x = self.fc_dec(z)
-        x = self.unflatten(x)
-        x = self.dec_init_conv(x)
-        x = self.dec1(x)
-        x = self.dec2(x)
-        x = self.dec3(x)
-        x = self.dec4(x)
-        x = self.final_upsample(x)
-        x = self.final_conv(x)
-        return x
-
-    def forward(self, x):
-        z = self.encode(x)
-        reconstruction = self.decode(z)
-        return reconstruction, z
-
-class ConvAutoencoder2(nn.Module):
-    def __init__(self, in_ch=1, latent_dim=256):
-        super().__init__()
-        
-        # Encoder: 128 → 64 → 32 → 16 → 4 → 1
-        self.enc1 = ResidualBlock(in_ch,   64, stride=2)  # 128 → 64
-        self.enc2 = ResidualBlock(64,     128, stride=2)  # 64 → 32
-        self.enc3 = ResidualBlock(128,    256, stride=2)  # 32 → 16
-        self.enc4 = ResidualBlock(256,    512, stride=4)  # 16 → 4
-        self.enc5 = ResidualBlock(512,   512, stride=4)  # 4 → 1
-
-        self.flatten = nn.Flatten()                     # (B,1024,1,1) → (B,1024)
-        self.fc_enc = nn.Linear(512, latent_dim)
-
-        self.fc_dec = nn.Linear(latent_dim, 512)
-        self.unflatten = nn.Unflatten(1, (512, 1, 1))   # (B,1024) → (B,1024,1,1)
-        self.dec_init_conv = ResidualBlock(512, 512, stride=1)
-
-        # Decoder: 1 → 4 → 16 → 32 → 64 → 128
-        self.dec1 = UpsampleBlock(512, 512, scale_factor=4)  # 1 → 4
-        self.dec2 = UpsampleBlock(512,  256, scale_factor=4)  # 4 → 16
-        self.dec3 = UpsampleBlock(256,  128, scale_factor=2)  # 16 → 32
-        self.dec4 = UpsampleBlock(128,   64, scale_factor=2)  # 32 → 64
-        
-        self.final_upsample = nn.Upsample(scale_factor=2, mode='nearest') # 64 → 128
-        self.final_conv = nn.Conv2d(64, in_ch, kernel_size=3, stride=1, padding=1)
-
-    def encode(self, x):
-        x = self.enc1(x)
-        x = self.enc2(x)
-        x = self.enc3(x)
-        x = self.enc4(x)
-        x = self.enc5(x)
-        x = self.flatten(x)
-        z = self.fc_enc(x)
-        return z
-
-    def decode(self, z):
-        x = self.fc_dec(z)
-        x = self.unflatten(x)
-        x = self.dec_init_conv(x)
-        x = self.dec1(x)
-        x = self.dec2(x)
-        x = self.dec3(x)
-        x = self.dec4(x)
-        x = self.final_upsample(x)
-        x = self.final_conv(x)
-        return x
-
-    def forward(self, x):
-        z = self.encode(x)
-        reconstruction = self.decode(z)
-        return reconstruction, z
-
-class AttentionChargedAutoencoder(nn.Module):
-    def __init__(self, in_ch=1, latent_dim=512, initial_res=8, embed_dim=768, num_heads=12, num_layers=6):
-        super().__init__()
-        self.latent_dim = latent_dim
-        self.initial_res = initial_res
-        self.embed_dim = embed_dim
-
-        self.enc1 = ResidualBlock(in_ch, 64, stride=2)
-        self.enc2 = ResidualBlock(64, 128, stride=2)
-        self.enc3 = ResidualBlock(128, 256, stride=2)
-        self.enc4 = ResidualBlock(256, 512, stride=4)
-        self.enc5 = ResidualBlock(512, 1024, stride=4)
-
-        self.flatten = nn.Flatten()
-        self.fc_enc = nn.Linear(1024, latent_dim)
-        self.fc_dec = nn.Linear(latent_dim, embed_dim)
-        self.pos_embed = nn.Parameter(torch.randn(1, initial_res * initial_res, embed_dim))
-
-        decoder_layer = nn.TransformerDecoderLayer(
-            d_model=embed_dim,
-            nhead=num_heads,
-            dim_feedforward=embed_dim * 4,
-            dropout=0.1,
-            activation='gelu',
-            batch_first=True,
-            norm_first=True
-        )
-        self.transformer_decoder = nn.TransformerDecoder(decoder_layer, num_layers)
-
-        self.dec1 = UpsampleBlock(embed_dim, 512, 2)
-        self.dec2 = UpsampleBlock(512, 256, 2)
-        self.dec3 = UpsampleBlock(256, 128, 2)
-        self.dec4 = UpsampleBlock(128, 64, 2)
-        self.final_conv = nn.Conv2d(64, in_ch, 3, 1, 1)
-
-    def encode(self, x):
-        x = self.enc1(x)
-        x = self.enc2(x)
-        x = self.enc3(x)
-        x = self.enc4(x)
-        x = self.enc5(x)
-        x = self.flatten(x)
-        return self.fc_enc(x)
-
-    def decode(self, z):
-        b = z.size(0)
-        memory = self.fc_dec(z).unsqueeze(1)
-        queries = self.pos_embed.repeat(b, 1, 1)
-        x = self.transformer_decoder(tgt=queries, memory=memory)
-        h = w = self.initial_res
-        x = x.permute(0, 2, 1).reshape(b, self.embed_dim, h, w)
-        x = self.dec1(x)
-        x = self.dec2(x)
-        x = self.dec3(x)
-        x = self.dec4(x)
-        return self.final_conv(x)
-
-    def forward(self, x):
-        z = self.encode(x)
-        return self.decode(z), z
-    
+os.environ['WANDB_API_KEY'] = '041eda3850f131617ee1d1c9714e6230c6ac4772'    
 class Loss(nn.Module):
-    def __init__(self, disc_start, disc_num_layers=3, disc_in_channels=1, disc_weight=1.0, use_actnorm=False, perceptual_weight=1.0):
+    def __init__(self, disc_start, disc_num_layers=3, disc_in_channels=1, disc_weight=1.0, use_actnorm=False, perceptual_weight=1.0, kl_weight=1.0, logvar_init=0.0):
         super().__init__()
         self.disc_start = disc_start
         self.disc_weight = disc_weight
@@ -248,15 +37,19 @@ class Loss(nn.Module):
         self.perceptual_loss = LPIPS().eval()
         self.perceptual_weight = perceptual_weight
 
-    def calculate_adaptive_weight(self, rec_loss, disc_loss, last_layer):
-        rec_grad = torch.autograd.grad(rec_loss, last_layer, retain_graph=True)[0]
+        self.logvar = nn.Parameter(torch.ones(size=()) * logvar_init)
+
+
+    def calculate_adaptive_weight(self, nll_loss, disc_loss, last_layer):
+        nll_grad = torch.autograd.grad(nll_loss, last_layer, retain_graph=True)[0]
         disc_grad = torch.autograd.grad(disc_loss, last_layer, retain_graph=True)[0]
-        d_weight = torch.norm(rec_grad) / (torch.norm(disc_grad) + 1e-4)
+        d_weight = torch.norm(nll_grad) / (torch.norm(disc_grad) + 1e-4)
         d_weight = self.disc_weight * d_weight
         d_weight = torch.clamp(d_weight, 0.0, 1e4).detach()
         return d_weight
 
-    def forward(self, inputs, reconstructions, optimizer_idx, last_layer, split, global_step):
+    def forward(self, inputs, reconstructions, posteriors, optimizer_idx, last_layer, split, global_step):
+        batch_size = inputs.size(0)
         rec_loss = F.l1_loss(reconstructions, inputs, reduction="mean")
 
         if self.perceptual_weight > 0:
@@ -265,10 +58,19 @@ class Loss(nn.Module):
             perceptual_loss = self.perceptual_loss(reconstructions_rgb, inputs_rgb).mean()
             rec_loss = rec_loss + self.perceptual_weight * perceptual_loss
 
+        nll_loss = rec_loss / torch.exp(self.logvar) + self.logvar
+        nll_loss = torch.sum(nll_loss) / batch_size
+        kl_loss = posteriors.kl()
+        kl_loss = torch.sum(kl_loss) / batch_size
+
+        nll_loss = nll_loss + kl_loss * self.kl_weight
+
         if global_step < self.disc_start:
-            return rec_loss, {
-            f"{split}/total_loss": rec_loss.detach().cpu().mean(),
+            return nll_loss, {
+            f"{split}/total_loss": nll_loss.detach().cpu().mean(),
             f"{split}/rec_loss": rec_loss.detach().cpu().mean(),
+            f"{split}/kl_loss": kl_loss.detach().cpu().mean(),
+            f"{split}/nll_loss": nll_loss.detach().cpu().mean(),
             f"{split}/g_loss": torch.tensor(0.0).cpu(),
             f"{split}/d_weight": torch.tensor(0.0).cpu(),
             }
@@ -277,14 +79,16 @@ class Loss(nn.Module):
             logits_fake = self.discriminator(reconstructions)
             g_loss = -torch.mean(logits_fake)
             try:
-                d_weight = self.calculate_adaptive_weight(rec_loss, g_loss, last_layer=last_layer)
+                d_weight = self.calculate_adaptive_weight(nll_loss, g_loss, last_layer=last_layer)
             except RuntimeError:
                 assert not self.training
                 d_weight = torch.tensor(0.0)
 
-            loss = rec_loss + d_weight * g_loss
+            loss = nll_loss + d_weight * g_loss
             return loss, {
             f"{split}/total_loss": loss.detach().cpu().mean(),
+            f"{split}/nll_loss": nll_loss.detach().cpu().mean(),
+            f"{split}/kl_loss": kl_loss.detach().cpu().mean(),
             f"{split}/rec_loss": rec_loss.detach().cpu().mean(),
             f"{split}/g_loss": g_loss.detach().cpu().mean(),
             f"{split}/d_weight": d_weight.detach().cpu().mean(),
@@ -306,15 +110,8 @@ class Model(pl.LightningModule):
         super().__init__()
         self.save_hyperparameters(cfg)
         self.cfg = cfg
-
-        if cfg.model.name == "convautoencoder":
-            self.autoencoder = ConvAutoencoder(latent_dim=cfg.ConvAutoencoder.latent_dim)
-        elif cfg.model.name == "convautoencoder2":
-            self.autoencoder = ConvAutoencoder2(latent_dim=cfg.ConvAutoencoder2.latent_dim)
-        elif cfg.model.name == "attentionchargedautoencoder":
-            self.autoencoder = AttentionChargedAutoencoder(latent_dim=cfg.AttentionChargedAutoencoder.latent_dim)
-        else:
-            raise ValueError(f"Unknown model type: {cfg.model.name}")
+        self.autoencoder = AutoencoderKL(in_channels=1, out_channels=1, latent_channels=512, down_block_types=("DownEncoderBlock2d") * 4, 
+                                        up_block_types=("UpDecoderBlock2d") * 4, block_out_channels=(64, 128, 256, 512))
 
         self.loss = Loss(cfg.lpips.disc_start, 
                         disc_num_layers=cfg.lpips.disc_num_layers, 
@@ -322,6 +119,8 @@ class Model(pl.LightningModule):
                         disc_weight=cfg.lpips.disc_weight, 
                         use_actnorm=cfg.lpips.use_actnorm,
                         perceptual_weight=cfg.lpips.perceptual_weight,
+                        kl_weight=cfg.lpips.kl_weight,
+                        logvar_init=cfg.lpips.logvar_init
                         )
         self.input_frames =  cfg.dataset.input_frames
         self.pred_frames = cfg.dataset.pred_frames
@@ -330,22 +129,21 @@ class Model(pl.LightningModule):
         self.automatic_optimization = False
 
     def forward(self, x):
-        recon, z = self.autoencoder(x)
-        return recon
+        recon, z = self.autoencoder(x, sample_posterior = True, return_posterior = True)
+        return recon, z
     
     def get_last_layer(self):
-        return self.autoencoder.final_conv.weight
+        return self.autoencoder.decoder.conv_out.weight
 
     def training_step(self, batch, batch_idx):
-        
         g_opt, d_opt = self.optimizers()
         g_sch, d_sch = self.lr_schedulers()       
 
         inp = batch['vil'] #[b, c, h, w]
-        pred = self(inp)
+        pred, z = self(inp)
 
         self.toggle_optimizer(g_opt)
-        aeloss, log_dict_ae = self.loss(inp, pred, optimizer_idx = 0, last_layer = self.get_last_layer(), split="train", global_step=self.global_step)
+        aeloss, log_dict_ae = self.loss(inp, pred, z, optimizer_idx = 0, last_layer = self.get_last_layer(), split="train", global_step=self.global_step)
         self.log_dict(log_dict_ae, on_step=True, on_epoch = True, sync_dist=True)
         aeloss = aeloss / self.accumulate_grad_batches
 
@@ -360,7 +158,7 @@ class Model(pl.LightningModule):
         #discriminator step
         if self.global_step >= self.cfg.lpips.disc_start:
             self.toggle_optimizer(d_opt)
-            discloss, log_dict_disc = self.loss(inp, pred, optimizer_idx = 1, last_layer = self.get_last_layer(), split="train", global_step=self.global_step)
+            discloss, log_dict_disc = self.loss(inp, pred, z, optimizer_idx = 1, last_layer = self.get_last_layer(), split="train", global_step=self.global_step)
             self.log_dict(log_dict_disc, on_step=True, on_epoch = True, sync_dist=True)
             discloss = discloss / self.accumulate_grad_batches
 
@@ -382,11 +180,11 @@ class Model(pl.LightningModule):
     
     def validation_step(self, batch, batch_idx):
         inp = batch['vil'] #[b, c, h, w]
-        pred = self(inp)
+        pred, z = self(inp)
 
-        aeloss, log_dict_ae = self.loss(inp, pred, optimizer_idx = 0, last_layer = self.get_last_layer(), split="val", global_step=self.global_step)
+        aeloss, log_dict_ae = self.loss(inp, pred, z, optimizer_idx = 0, last_layer = self.get_last_layer(), split="val", global_step=self.global_step)
         self.log_dict(log_dict_ae, on_step=True, on_epoch = True, sync_dist=True)
-        discloss, log_dict_disc = self.loss(inp, pred, optimizer_idx = 1, last_layer = self.get_last_layer(), split="val", global_step=self.global_step)
+        discloss, log_dict_disc = self.loss(inp, pred, z, optimizer_idx = 1, last_layer = self.get_last_layer(), split="val", global_step=self.global_step)
         self.log_dict(log_dict_disc, on_step=True, on_epoch = True, sync_dist=True)
         
         log_metrics(pred.unsqueeze(2), inp.unsqueeze(2), "val", self)
@@ -397,11 +195,11 @@ class Model(pl.LightningModule):
 
     def test_step(self, batch, batch_idx):
         inp = batch['vil'] #[b, c, h, w]
-        pred = self(inp)
-        
-        aeloss, log_dict_ae = self.loss(inp, pred, optimizer_idx = 0, last_layer = self.get_last_layer(), split="test", global_step=self.global_step)
+        pred, z = self(inp)
+
+        aeloss, log_dict_ae = self.loss(inp, pred, z, optimizer_idx = 0, last_layer = self.get_last_layer(), split="test", global_step=self.global_step)
         self.log_dict(log_dict_ae, on_step=True, on_epoch = True, sync_dist=True)
-        discloss, log_dict_disc = self.loss(inp, pred, optimizer_idx = 1, last_layer = self.get_last_layer(), split="test", global_step=self.global_step)
+        discloss, log_dict_disc = self.loss(inp, pred, z, optimizer_idx = 1, last_layer = self.get_last_layer(), split="test", global_step=self.global_step)
         self.log_dict(log_dict_disc, on_step=True, on_epoch = True, sync_dist=True)
         
         log_metrics(pred.unsqueeze(2), inp.unsqueeze(2), "test", self)
@@ -525,6 +323,7 @@ if __name__ == "__main__":
         limit_val_batches=cfg.trainer.limit_val_batches,
         limit_test_batches=cfg.trainer.limit_test_batches,
         log_every_n_steps=cfg.trainer.log_every_n_steps,
+        fast_dev_run=True
     )
 
     model = Model(cfg)

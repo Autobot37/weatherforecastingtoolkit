@@ -127,6 +127,83 @@ class Downsample2D(nn.Module):
         hidden_states = self.conv(hidden_states)
 
         return hidden_states
+    
+class Upsample4x2D(nn.Module):
+    """
+    A 4x upsampling layer composed of two sequential 2x Upsample2D layers.
+    Mirrors the interface of Upsample2D.
+
+    Parameters:
+        channels: channels in the inputs and outputs.
+        use_conv: whether to apply a 3x3 conv after upsampling.
+        use_conv_transpose: whether to use conv transpose for each 2x step.
+        out_channels: output channels (if None, equal to channels).
+        name: layer naming, passed to underlying Upsample2D.
+    """
+    def __init__(self, channels, use_conv=False, use_conv_transpose=False, out_channels=None, name="conv"):
+        super().__init__()
+        mid_channels = out_channels or channels
+        # First 2x upsample
+        self.up1 = Upsample2D(
+            channels=channels,
+            use_conv=use_conv,
+            use_conv_transpose=use_conv_transpose,
+            out_channels=mid_channels,
+            name=name
+        )
+        # Second 2x upsample
+        self.up2 = Upsample2D(
+            channels=mid_channels,
+            use_conv=use_conv,
+            use_conv_transpose=use_conv_transpose,
+            out_channels=out_channels or channels,
+            name=name
+        )
+
+    def forward(self, hidden_states, output_size=None):
+        # First pass: double size
+        x = self.up1(hidden_states, output_size=None)
+        # Second pass: quadruple size
+        return self.up2(x, output_size=output_size)
+
+
+class Downsample4x2D(nn.Module):
+    """
+    A 4x downsampling layer composed of two sequential 2x Downsample2D layers.
+    Mirrors the interface of Downsample2D.
+
+    Parameters:
+        channels: channels in the inputs and outputs.
+        use_conv: whether to apply a 3x3 conv for downsampling.
+        out_channels: output channels (if None, equal to channels).
+        padding: padding for conv downsample.
+        name: layer naming, passed to underlying Downsample2D.
+    """
+    def __init__(self, channels, use_conv=False, out_channels=None, padding=1, name="conv"):
+        super().__init__()
+        mid_channels = out_channels or channels
+        # First 2x downsample
+        self.down1 = Downsample2D(
+            channels=channels,
+            use_conv=use_conv,
+            out_channels=mid_channels,
+            padding=padding,
+            name=name
+        )
+        # Second 2x downsample
+        self.down2 = Downsample2D(
+            channels=mid_channels,
+            use_conv=use_conv,
+            out_channels=out_channels or channels,
+            padding=padding,
+            name=name
+        )
+
+    def forward(self, hidden_states):
+        # First pass: half size
+        x = self.down1(hidden_states)
+        # Second pass: quarter size
+        return self.down2(x)
 
 class ResnetBlock2D(nn.Module):
     def __init__(
@@ -460,6 +537,7 @@ def get_down_block(
     only_cross_attention=False,
     upcast_attention=False,
     resnet_time_scale_shift="default",
+    scale = 2,
 ):
     down_block_type = down_block_type[7:] if down_block_type.startswith("UNetRes") else down_block_type
     if down_block_type == "DownEncoderBlock2D":
@@ -473,6 +551,7 @@ def get_down_block(
             resnet_groups=resnet_groups,
             downsample_padding=downsample_padding,
             resnet_time_scale_shift=resnet_time_scale_shift,
+            scale = scale
         )
     raise ValueError(f"{down_block_type} does not exist.")
 
@@ -495,6 +574,7 @@ def get_up_block(
     only_cross_attention=False,
     upcast_attention=False,
     resnet_time_scale_shift="default",
+    scale = 2
 ):
     up_block_type = up_block_type[7:] if up_block_type.startswith("UNetRes") else up_block_type
     if up_block_type == "UpDecoderBlock2D":
@@ -507,6 +587,7 @@ def get_up_block(
             resnet_act_fn=resnet_act_fn,
             resnet_groups=resnet_groups,
             resnet_time_scale_shift=resnet_time_scale_shift,
+            scale = scale
         )
     raise ValueError(f"{up_block_type} does not exist.")
 
@@ -605,6 +686,7 @@ class DownEncoderBlock2D(nn.Module):
         output_scale_factor=1.0,
         add_downsample=True,
         downsample_padding=1,
+        scale = 2,
     ):
         super().__init__()
         resnets = []
@@ -629,13 +711,22 @@ class DownEncoderBlock2D(nn.Module):
         self.resnets = nn.ModuleList(resnets)
 
         if add_downsample:
-            self.downsamplers = nn.ModuleList(
-                [
-                    Downsample2D(
-                        out_channels, use_conv=True, out_channels=out_channels, padding=downsample_padding, name="op"
-                    )
-                ]
-            )
+            if scale == 2:
+                self.downsamplers = nn.ModuleList(
+                    [
+                        Downsample2D(
+                            out_channels, use_conv=True, out_channels=out_channels, padding=downsample_padding, name="op"
+                        )
+                    ]
+                )
+            elif scale == 4:
+                self.downsamplers = nn.ModuleList(
+                    [
+                        Downsample4x2D(
+                            out_channels, use_conv=True, out_channels=out_channels, padding=downsample_padding, name="op"
+                        )
+                    ]
+                )
         else:
             self.downsamplers = None
 
@@ -664,6 +755,7 @@ class UpDecoderBlock2D(nn.Module):
         resnet_pre_norm: bool = True,
         output_scale_factor=1.0,
         add_upsample=True,
+        scale = 2,
     ):
         super().__init__()
         resnets = []
@@ -689,7 +781,12 @@ class UpDecoderBlock2D(nn.Module):
         self.resnets = nn.ModuleList(resnets)
 
         if add_upsample:
-            self.upsamplers = nn.ModuleList([Upsample2D(out_channels, use_conv=True, out_channels=out_channels)])
+            if scale == 2:
+                self.upsamplers = nn.ModuleList([Upsample2D(out_channels, use_conv=True, out_channels=out_channels)])
+            else:
+                self.upsamplers = nn.ModuleList(
+                    [Upsample4x2D(out_channels, use_conv=True, out_channels=out_channels)]
+                )
         else:
             self.upsamplers = None
 
@@ -724,6 +821,8 @@ class Encoder(nn.Module):
         self.down_blocks = nn.ModuleList([])
 
         # down 128 -> 64 -> 16 -> 4 -> 1
+        scales = [2, 4, 4, 4]
+
         output_channel = block_out_channels[0]
         for i, down_block_type in enumerate(down_block_types):
             input_channel = output_channel
@@ -742,6 +841,7 @@ class Encoder(nn.Module):
                 resnet_groups=norm_num_groups,
                 attn_num_head_channels=None,
                 temb_channels=None,
+                scale=scales[i] if i < len(scales) else -1,
             )
             self.down_blocks.append(down_block)
 
@@ -815,6 +915,8 @@ class Decoder(nn.Module):
         )
 
         # up
+        scales = [4, 4, 4, 2]
+
         reversed_block_out_channels = list(reversed(block_out_channels))
         output_channel = reversed_block_out_channels[0]
         for i, up_block_type in enumerate(up_block_types):
@@ -835,6 +937,7 @@ class Decoder(nn.Module):
                 resnet_groups=norm_num_groups,
                 attn_num_head_channels=None,
                 temb_channels=None,
+                scale=scales[i] if i < len(scales) else -1,
             )
             self.up_blocks.append(up_block)
             prev_output_channel = output_channel
