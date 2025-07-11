@@ -245,3 +245,11 @@ class TrackGradNormCallback(pl.Callback):
         total_norm = total_norm ** (1. / self.norm_type)
         if isinstance(trainer.logger, WandbLogger):
             trainer.logger.experiment.log({"grad_norm": total_norm, "global_step": trainer.global_step})
+
+def check_yaml(cfg, cli_cfg, path=""):
+    for k in cli_cfg:
+        full_key = f"{path}.{k}" if path else k
+        if k not in cfg:
+            raise KeyError(f"Invalid override key: '{full_key}' not found in base config")
+        if isinstance(cli_cfg[k], dict) and isinstance(cfg[k], dict):
+            check_yaml(cfg[k], cli_cfg[k], full_key)

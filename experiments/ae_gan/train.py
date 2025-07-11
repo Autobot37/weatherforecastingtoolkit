@@ -8,7 +8,7 @@ import pytorch_lightning as pl
 from omegaconf import OmegaConf
 from termcolor import colored
 from pipeline.models.autoencoderkl.losses.contperceptual import adopt_weight, hinge_d_loss, NLayerDiscriminator, weights_init, LPIPS
-from pipeline.datasets.sevir.sevir import SEVIRLightningDataModule
+from pipeline.datasets.sevire.sevir import SEVIRLightningDataModule
 from pytorch_lightning.callbacks import LearningRateMonitor
 from pytorch_lightning.loggers import WandbLogger
 from pipeline.helpers import load_checkpoint_cascast, log_gradients_paramater, modelcheckpointcallback, TrackGradNormCallback \
@@ -20,6 +20,27 @@ L_adv = -mean(D(x^))
 w_adapt = grad(rec)/grad(l_adv) #to balance both losses
 gen_loss = rec + disc_factor * w_adapt * L_adv
 """
+import sys
+
+def override_config(cfg, cli_args):
+    for arg in cli_args:
+        if "=" not in arg:
+            continue
+        keys, value = arg.split("=", 1)
+        keys = keys.split(".")
+        ref = cfg
+        for k in keys[:-1]:
+            ref = ref.setdefault(k, {})
+        # Try to convert value to number/bool if possible
+        if value.lower() == "true":
+            value = True
+        elif value.lower() == "false":
+            value = False
+        else:
+            try: value = eval(value)
+            except: pass
+        ref[keys[-1]] = value
+    return cfg
 os.environ['WANDB_API_KEY'] = '041eda3850f131617ee1d1c9714e6230c6ac4772'
 
 class ResidualBlock(nn.Module):
@@ -84,6 +105,60 @@ class ConvAutoencoder(nn.Module):
 
         # Decoder: 1 → 4 → 16 → 32 → 64 → 128
         self.dec1 = UpsampleBlock(1024, 512, scale_factor=4)  # 1 → 4
+        self.dec2 = UpsampleBlock(512,  256, scale_factor=4)  # 4 → 16
+        self.dec3 = UpsampleBlock(256,  128, scale_factor=2)  # 16 → 32
+        self.dec4 = UpsampleBlock(128,   64, scale_factor=2)  # 32 → 64
+        
+        self.final_upsample = nn.Upsample(scale_factor=2, mode='nearest') # 64 → 128
+        self.final_conv = nn.Conv2d(64, in_ch, kernel_size=3, stride=1, padding=1)
+
+    def encode(self, x):
+        x = self.enc1(x)
+        x = self.enc2(x)
+        x = self.enc3(x)
+        x = self.enc4(x)
+        x = self.enc5(x)
+        x = self.flatten(x)
+        z = self.fc_enc(x)
+        return z
+
+    def decode(self, z):
+        x = self.fc_dec(z)
+        x = self.unflatten(x)
+        x = self.dec_init_conv(x)
+        x = self.dec1(x)
+        x = self.dec2(x)
+        x = self.dec3(x)
+        x = self.dec4(x)
+        x = self.final_upsample(x)
+        x = self.final_conv(x)
+        return x
+
+    def forward(self, x):
+        z = self.encode(x)
+        reconstruction = self.decode(z)
+        return reconstruction, z
+
+class ConvAutoencoder2(nn.Module):
+    def __init__(self, in_ch=1, latent_dim=256):
+        super().__init__()
+        
+        # Encoder: 128 → 64 → 32 → 16 → 4 → 1
+        self.enc1 = ResidualBlock(in_ch,   64, stride=2)  # 128 → 64
+        self.enc2 = ResidualBlock(64,     128, stride=2)  # 64 → 32
+        self.enc3 = ResidualBlock(128,    256, stride=2)  # 32 → 16
+        self.enc4 = ResidualBlock(256,    512, stride=4)  # 16 → 4
+        self.enc5 = ResidualBlock(512,   512, stride=4)  # 4 → 1
+
+        self.flatten = nn.Flatten()                     # (B,1024,1,1) → (B,1024)
+        self.fc_enc = nn.Linear(512, latent_dim)
+
+        self.fc_dec = nn.Linear(latent_dim, 512)
+        self.unflatten = nn.Unflatten(1, (512, 1, 1))   # (B,1024) → (B,1024,1,1)
+        self.dec_init_conv = ResidualBlock(512, 512, stride=1)
+
+        # Decoder: 1 → 4 → 16 → 32 → 64 → 128
+        self.dec1 = UpsampleBlock(512, 512, scale_factor=4)  # 1 → 4
         self.dec2 = UpsampleBlock(512,  256, scale_factor=4)  # 4 → 16
         self.dec3 = UpsampleBlock(256,  128, scale_factor=2)  # 16 → 32
         self.dec4 = UpsampleBlock(128,   64, scale_factor=2)  # 32 → 64
@@ -252,8 +327,16 @@ class Model(pl.LightningModule):
         super().__init__()
         self.save_hyperparameters(cfg)
         self.cfg = cfg
-        # self.autoencoder = ConvAutoencoder()
-        self.autoencoder = AttentionChargedAutoencoder()
+
+        if cfg.model.name == "convautoencoder":
+            self.autoencoder = ConvAutoencoder(latent_dim=cfg.ConvAutoencoder.latent_dim)
+        elif cfg.model.name == "convautoencoder2":
+            self.autoencoder = ConvAutoencoder2(latent_dim=cfg.ConvAutoencoder2.latent_dim)
+        elif cfg.model.name == "attentionchargedautoencoder":
+            self.autoencoder = AttentionChargedAutoencoder(latent_dim=cfg.AttentionChargedAutoencoder.latent_dim)
+        else:
+            raise ValueError(f"Unknown model type: {cfg.model.name}")
+
         self.loss = Loss(cfg.lpips.disc_start, 
                         disc_num_layers=cfg.lpips.disc_num_layers, 
                         disc_in_channels=cfg.lpips.disc_in_channels, 
@@ -265,7 +348,6 @@ class Model(pl.LightningModule):
         self.pred_frames = cfg.dataset.pred_frames
         self.total_steps = cfg.trainer.total_train_steps
         self.accumulate_grad_batches = cfg.trainer.accumulate_grad_batches
-
         self.automatic_optimization = False
 
     def forward(self, x):
@@ -279,7 +361,7 @@ class Model(pl.LightningModule):
         g_opt, d_opt = self.optimizers()
         g_sch, d_sch = self.lr_schedulers()       
 
-        inp = batch.permute(0,3,1,2) #[b, c, h, w]
+        inp = batch['vil'] #[b, c, h, w]
         pred = self(inp)
 
         self.toggle_optimizer(g_opt)
@@ -319,7 +401,7 @@ class Model(pl.LightningModule):
             log_wandb_images(pred, inp, f"Train Reconstruction vs Original_epoch_{self.current_epoch}_batch_{batch_idx}", self)
     
     def validation_step(self, batch, batch_idx):
-        inp = batch.permute(0,3,1,2) #[b, c, h, w]
+        inp = batch['vil'] #[b, c, h, w]
         pred = self(inp)
 
         aeloss, log_dict_ae = self.loss(inp, pred, optimizer_idx = 0, last_layer = self.get_last_layer(), split="val", global_step=self.global_step)
@@ -334,7 +416,7 @@ class Model(pl.LightningModule):
             log_wandb_images(pred, inp, f"Val_Reconstruction vs Original_epoch_{self.current_epoch}_batch_{batch_idx}", self)
 
     def test_step(self, batch, batch_idx):
-        inp = batch.permute(0,3,1,2) #[b, c, h, w]
+        inp = batch['vil'] #[b, c, h, w]
         pred = self(inp)
         
         aeloss, log_dict_ae = self.loss(inp, pred, optimizer_idx = 0, last_layer = self.get_last_layer(), split="test", global_step=self.global_step)
@@ -364,27 +446,32 @@ class Model(pl.LightningModule):
             ]
     
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--resume", type=str, default=None)
-    parser.add_argument("--run_id", type=str, default=None)
-    args = parser.parse_args()
-    resume_ckpt = args.resume
-    run_id = args.run_id
-    if run_id is not None:
-        print(colored(f"Resuming from checkpoint: {resume_ckpt} with run_id: {run_id}", "green"))
+    # parser = argparse.ArgumentParser()
+    # parser.add_argument("--resume", type=str, default=None)
+    # parser.add_argument("--run_id", type=str, default=None)
+    # args = parser.parse_args()
+    # resume_ckpt = args.resume
+    # run_id = args.run_id
+    # if run_id is not None:
+    #     print(colored(f"Resuming from checkpoint: {resume_ckpt} with run_id: {run_id}", "green"))
 
     torch.backends.cudnn.benchmark = True 
     torch.set_float32_matmul_precision('high')
 
     config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
     cfg = OmegaConf.load(config_path)
+    cli_args = sys.argv[1:]
+    print(cli_args)
+    cfg = override_config(cfg, cli_args)
     outputs_path = os.path.join(cfg.experiment_path, 'outputs')
     os.makedirs(outputs_path, exist_ok=True)
 
-    dm = SEVIRLightningDataModule(cfg.dataset); dm.setup()
+    dm = SEVIRLightningDataModule(dataset_name="sevir_lr", num_workers=8, batch_size=8, seq_len=1, stride=1, layout='NTHW')
+    dm.setup()
+    dm.prepare_data()    
     for loader in [dm.train_dataloader(), dm.val_dataloader()]:
         for data in loader:
-            print(f"Data shape: {data.shape}")
+            print(f"Data shape: {data['vil'].shape}")
             break
 
     total_train_steps = (len(dm.train_dataloader()) * cfg.trainer.max_epochs) / cfg.trainer.accumulate_grad_batches
@@ -401,7 +488,7 @@ if __name__ == "__main__":
         cfg.trainer.total_test_steps = total_test_steps * cfg.trainer.limit_test_batches
     cfg.lpips.disc_start = int(cfg.lpips.disc_start * cfg.trainer.total_train_steps)
 
-    logger = WandbLogger(project = cfg.project_name, name = cfg.experiment_name, save_dir = os.path.join(cfg.experiment_path, 'outputs'), id = run_id, resume = "allow")
+    logger = WandbLogger(project = cfg.project_name, name = cfg.experiment_name, save_dir = os.path.join(cfg.experiment_path, 'outputs'), resume = "allow")
     run_id = logger.experiment.id
     run_dir = logger.experiment.dir
     artifact = wandb.Artifact(cfg.experiment_name, type="code")
@@ -425,5 +512,5 @@ if __name__ == "__main__":
     )
 
     model = Model(cfg)
-    trainer.fit(model, dm, ckpt_path=resume_ckpt)
+    trainer.fit(model, dm)
     print("done")

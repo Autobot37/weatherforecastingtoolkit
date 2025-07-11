@@ -1,9 +1,21 @@
-project_name : "ae_gan"
+project_name : "ae_gan_night"
 experiment_name : "ae_attn_512"
 experiment_path : "experiments/ae_gan"
+
+ConvAutoencoder:
+  latent_dim: 512
+ConvAutoencoder2:
+  latent_dim: 256
+AttentionChargedAutoencoder:
+  latent_dim: 512
+
+model:
+  name: "convautoencoder"
+#can be "convautoencoder", "convautoencoder2", "attentionchargedautoencoder"
+  
   
 lpips:
-  disc_start: 0.0
+  disc_start: 1.0
   disc_weight: 0.0
   disc_in_channels: 1
   disc_num_layers: 3
@@ -24,9 +36,7 @@ dataset:
   aug_mode: "0"
   ret_contiguous: true
   batch_size: 16
-  num_workers: 4
-  prefetch_factor: 2
-  pin_memory: true
+  num_workers: 8
 
   seed: 0
   val_ratio: 0.1

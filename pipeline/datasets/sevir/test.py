@@ -3,24 +3,37 @@ from omegaconf import OmegaConf
 
 import time
 from tqdm import tqdm
+import faulthandler
+faulthandler.enable()
 
 def main():
-    cfg = OmegaConf.load("pipeline/datasets/sevir/fast_config.yaml").Dataset
+    # cfg = OmegaConf.load("pipeline/datasets/sevir/fast_config.yaml").dataset
 
-    data_module = SEVIRLightningDataModule(cfg=cfg)
-    data_module.setup()
-    train_loader = data_module.train_dataloader()
+    # data_module = SEVIRLightningDataModule(cfg=cfg)
+    # data_module.setup()
+    # train_loader = data_module.train_dataloader()
     
-    print("profiling for dataset")
+    # start_time = time.time()
+    # idx = 0
+    # total = len(train_loader)
+    # for epochs in range(50):
+    #     for batch in tqdm(train_loader, total=total):
+    #         pass
+
+    from pipeline.datasets.sevire.sevir import SEVIRLightningDataModule
+    data = SEVIRLightningDataModule(dataset_name="sevir_lr", num_workers=8, batch_size=8)
+    data.setup()
+    data.prepare_data()
+
+    train_loader = data.train_dataloader()
     start_time = time.time()
-    idx = 0
-    total = len(train_loader)
-    for batch in tqdm(train_loader, total=total):
-        idx += 1
-        if idx > 1000:
-            break
+    for epoch in range(10):
+        for batch in tqdm(train_loader):
+            pass
+    
     end_time = time.time()
-    print(f"Time taken for dataset: {end_time - start_time} seconds")
+    print(f"Time taken for 10 epochs: {end_time - start_time} seconds")
+
 
 if __name__ == "__main__":
     main()

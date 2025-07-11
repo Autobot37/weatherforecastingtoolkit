@@ -621,6 +621,54 @@ class SEVIRDataLoader:
                 return all_remain_seq < self.batch_size
             else:
                 return all_remain_seq <= 0
+    
+    def read_batch(self, pd_batch):
+        """
+        Vectorized version of _read_data over the whole batch.
+
+        Parameters
+        ----------
+        pd_batch : pd.DataFrame
+            Columns must include for each img type t:
+            - f'{t}_filename'
+            - f'{t}_index'
+            - (optionally) f'{t}_time_index' if needed by your lght→grid binning
+
+        Returns
+        -------
+        data : dict of np.ndarray
+            data[t].shape == (batch_size, H, W, raw_seq_len) for each t.
+        """
+        data = {}
+        # determine all image‑types present
+        imgtyps = {col.split("_")[0]
+                for col in pd_batch.columns
+                if col.endswith("_filename")}
+
+        for t in imgtyps:
+            fn_col = f"{t}_filename"
+            idx_col = f"{t}_index"
+            # group rows by filename so we read each HDF5 once
+            for fname, grp in pd_batch.groupby(fn_col):
+                inds = grp[idx_col].values
+                if t == "lght":
+                    # read all lght frames in one go
+                    raw = self._hdf_files[fname][inds, ...]  # shape (n, ...)
+                    # vectorized binning; _lght_to_grid must accept a stack
+                    print("before _lght_to_grid")
+                    out = self._lght_to_grid(raw)
+                    print("after lght to grid")
+                else:
+                    # for other types, slice directly
+                    out = self._hdf_files[fname][t][inds, :, :, :]
+                # concatenate into data[t]
+                if t in data:
+                    data[t] = np.concatenate((data[t], out), axis=0)
+                else:
+                    data[t] = out
+
+        return data
+
 
     def _load_event_batch(self, event_idx, event_batch_size):
         """
@@ -644,9 +692,12 @@ class SEVIRDataLoader:
             pad_size = event_idx_slice_end - self.end_event_idx
             event_idx_slice_end = self.end_event_idx
         pd_batch = self._samples.iloc[event_idx:event_idx_slice_end]
-        data = {}
-        for index, row in pd_batch.iterrows():
-            data = self._read_data(row, data)
+        print("iloc complete")
+        # data = {}
+        # for index, row in pd_batch.iterrows():
+        #     data = self._read_data(row, data)
+        data = self.read_batch(pd_batch)
+        print("read_data complete")
         if pad_size > 0:
             event_batch = []
             for t in self.data_types:
@@ -1086,8 +1137,6 @@ class SEVIRLightningDataModule(LightningDataModule):
         self.ret_contiguous = cfg.ret_contiguous
         self.batch_size = cfg.batch_size
         self.num_workers = cfg.num_workers
-        self.prefetch_factor = cfg.prefetch_factor
-        self.pin_memory = cfg.pin_memory 
         self.seed = cfg.seed
     
         self.sevir_dir = cfg.data_dir
@@ -1161,19 +1210,19 @@ class SEVIRLightningDataModule(LightningDataModule):
         return DataLoader(self.sevir_train,
                           batch_size=self.batch_size,
                           shuffle=True,
-                          num_workers=self.num_workers, prefetch_factor=self.prefetch_factor, pin_memory=self.pin_memory)
+                          num_workers=self.num_workers)
 
     def val_dataloader(self):
         return DataLoader(self.sevir_val,
                           batch_size=self.batch_size,
                           shuffle=False,
-                          num_workers=self.num_workers, prefetch_factor=self.prefetch_factor, pin_memory=self.pin_memory)
+                          num_workers=self.num_workers)
 
     def test_dataloader(self):
         return DataLoader(self.sevir_test,
                           batch_size=self.batch_size,
                           shuffle=False,
-                          num_workers=self.num_workers, prefetch_factor=self.prefetch_factor, pin_memory=self.pin_memory)
+                          num_workers=self.num_workers)
 
     @property
     def num_train_samples(self):

@@ -1,0 +1,81 @@
+project_name : "delete_it"
+experiment_path : "/home/vatsal/NWM/weatherforecasting/experiments/test"
+experiment_name : "ae_test"
+
+ConvAutoencoder:
+  latent_dim: 512
+ConvAutoencoder2:
+  latent_dim: 256
+AttentionChargedAutoencoder:
+  latent_dim: 512
+
+model:
+  name: "convautoencoder"
+  #CAN BE "convautoencoder2" or "attentionchargedautoencoder"
+
+lpips:
+  disc_start: 1.0
+  disc_weight: 0.0
+  disc_in_channels: 1
+  disc_num_layers: 3
+  use_actnorm: false
+  perceptual_weight: 0.0
+
+# dataset
+dataset:
+  name: sevir_lr
+  seq_len: 1
+  stride: 1
+  batch_size: 16
+  num_workers: 8
+
+  input_frames: 0
+  pred_frames: 1
+  image_width: 128
+  image_height: 128
+  channels: 1
+
+# optimizer
+optim:
+  lr : 1e-4
+  weight_decay : 1e-3
+  gradient_clip_val : 1.0
+
+# lr scheduler
+cosine_warmup:
+  start_lr: 1e-5
+  peak_lr: 1e-4
+  final_lr: 1e-6
+  warmup_ratio: 0.1
+
+one_cycle:
+  peak_lr : 1e-3
+  start_lr: 4e-5
+  final_lr: 4e-7
+  rampup_ratio: 0.3
+
+lr_range_test:
+  max_lr: 1
+  num_iter: 100
+
+# trainer
+trainer:
+  devices: [1]
+  max_epochs: 1
+  accumulate_grad_batches: 1
+  total_train_steps : -1 # need to be set
+  total_val_steps : -1 # need to be set
+  total_test_steps : -1 # need to be set
+  save_every_n_steps: 0.001
+  save_on_train_epoch_end: true
+  limit_train_batches: 0.1
+  limit_val_batches: 0.1
+  limit_test_batches: 0.1
+  log_every_n_steps: 1
+
+# logging
+logging:
+  wandb_watch_log_freq: 0
+  log_train_all_metrics_n : 0.01
+  log_train_plots_n : 0.1
+  log_val_plots_n : 0.1
