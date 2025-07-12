@@ -48,8 +48,8 @@ run_with_retry() {
 }
 
 declare -a RUNS=(
-    "experiment_name=ae_gan_kl",
-    "experiment_name=ae_gan_kl_disc_1 lpips.disc_start=0.0 lpips.disc_weight=1.0",
+    "experiment_name=ae_gan_kl"
+    "experiment_name=ae_gan_kl_disc_1 lpips.disc_start=0.0 lpips.disc_weight=1.0"
 )
 
 for config in "${RUNS[@]}"; do

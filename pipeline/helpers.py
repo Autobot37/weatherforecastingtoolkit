@@ -229,7 +229,7 @@ def modelcheckpointcallback(run_dir, total_train_steps, save_every_n_steps, save
         filename = "{epoch}-{step:06d}",
         every_n_train_steps = int(total_train_steps * save_every_n_steps),
         save_on_train_epoch_end = save_on_train_epoch_end,
-        save_top_k=-1,
+        save_last= True
     )
 class TrackGradNormCallback(pl.Callback):
     def __init__(self, norm_type=2):
@@ -253,3 +253,38 @@ def check_yaml(cfg, cli_cfg, path=""):
             raise KeyError(f"Invalid override key: '{full_key}' not found in base config")
         if isinstance(cli_cfg[k], dict) and isinstance(cfg[k], dict):
             check_yaml(cfg[k], cli_cfg[k], full_key)
+
+import os
+from termcolor import colored
+
+def find_latest_ckpt(cfg):
+    wandb_dir = os.path.join(cfg.experiment_path, 'outputs', cfg.experiment_name, 'wandb')
+    if not os.path.exists(wandb_dir):
+        return None, None
+
+    latest_ckpt = None
+    latest_mtime = -1
+    run_id = None
+
+    for run_dir in os.listdir(wandb_dir):
+        run_path = os.path.join(wandb_dir, run_dir)
+        ckpt_dir = os.path.join(run_path, 'files/checkpoints')
+
+        if not (run_dir.startswith("run-") and os.path.isdir(ckpt_dir)):
+            continue
+
+        for fname in os.listdir(ckpt_dir):
+            if not fname.endswith(".ckpt"):
+                continue
+
+            fpath = os.path.join(ckpt_dir, fname)
+            mtime = os.path.getmtime(fpath)
+            if mtime > latest_mtime:
+                latest_mtime = mtime
+                latest_ckpt = fpath
+                run_id = run_dir.split("-")[-1]
+
+    if latest_ckpt is None:
+        return None, None
+
+    return latest_ckpt, run_id

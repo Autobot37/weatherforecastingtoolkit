@@ -1,6 +1,6 @@
 project_name : "ae_gan_night"
 experiment_path : "/home/vatsal/NWM/weatherforecasting/experiments/ae_gan_kl"
-experiment_name : "ae_test"
+experiment_name : "ae_gan_kl"
 
 model:
   name: "ae_kl"
@@ -20,7 +20,7 @@ dataset:
   name: sevir_lr
   seq_len: 1
   stride: 1
-  batch_size: 16
+  batch_size: 8
   num_workers: 8
 
   input_frames: 0
@@ -55,16 +55,16 @@ lr_range_test:
 # trainer
 trainer:
   devices: [1]
-  max_epochs: 1
+  max_epochs: 50
   accumulate_grad_batches: 1
   total_train_steps : -1 # need to be set
   total_val_steps : -1 # need to be set
   total_test_steps : -1 # need to be set
   save_every_n_steps: 0.01
   save_on_train_epoch_end: true
-  limit_train_batches: 0.1
-  limit_val_batches: 0.1
-  limit_test_batches: 0.1
+  limit_train_batches: 0.05
+  limit_val_batches: 0.05
+  limit_test_batches: 0.05
   log_every_n_steps: 1
 
 # logging

@@ -13,7 +13,7 @@ from pytorch_lightning.callbacks import LearningRateMonitor
 from pytorch_lightning.loggers import WandbLogger
 from pipeline.models.autoencoderkl.custom_akl import AutoencoderKL
 from pipeline.helpers import load_checkpoint_cascast, log_gradients_paramater, modelcheckpointcallback, TrackGradNormCallback \
-    , adamw_optimizer, cosine_warmup_scheduler, log_metrics, log_wandb_images, check_yaml
+    , adamw_optimizer, cosine_warmup_scheduler, log_metrics, log_wandb_images, check_yaml, find_latest_ckpt
 """
 384x384
 rec = l1
@@ -252,34 +252,12 @@ if __name__ == "__main__":
     cfg = OmegaConf.merge(cfg, cli_cfg)
 
     if args.resume:
-        try:
-            wandb_dir = os.path.join(cfg.experiment_path, 'outputs', cfg.experiment_name, 'wandb')
-            if not os.path.exists(wandb_dir):
-                raise FileNotFoundError(f"Wandb directory {wandb_dir} does not exist")
-            
-            run_dirs = [d for d in os.listdir(wandb_dir) if d.startswith("run-") and os.path.isdir(os.path.join(wandb_dir, d))]
-            if not run_dirs:
-                raise ValueError("No run directories found in wandb_dir")
-            
-            latest_run_dir = max(run_dirs, key=lambda d: os.path.getmtime(os.path.join(wandb_dir, d)))
-            latest_run_path = os.path.join(wandb_dir, latest_run_dir)
-            ckpt_dir = os.path.join(latest_run_path, 'checkpoints')
-            
-            if not os.path.exists(ckpt_dir):
-                raise FileNotFoundError(f"Checkpoint directory {ckpt_dir} does not exist")
-            
-            ckpts = sorted(f for f in os.listdir(ckpt_dir) if f.endswith(".ckpt"))
-            if not ckpts:
-                raise FileNotFoundError("No checkpoint files found")
-            
-            ckpt_path = os.path.join(ckpt_dir, ckpts[-1])
-            run_id = latest_run_dir.split('-')[-1]  
-            print(colored(f"Resuming from latest checkpoint: {ckpt_path} from directory {latest_run_dir} with run id {run_id}", "green"))
-            
-        except (FileNotFoundError, ValueError, IndexError, OSError) as e:
-            print(colored(f"Cannot resume: {e}", "yellow"))
-            print(colored("Starting fresh training...", "cyan"))
+        ckpt_path, run_id = find_latest_ckpt(cfg)
+        if ckpt_path is None:
             args.resume = False
+            print(colored("No checkpoint found, starting from scratch.", "yellow"))
+        else:
+            print(colored(f"Resuming from checkpoint: {ckpt_path} with run id {run_id}", "green"))
 
     outputs_path = os.path.join(cfg.experiment_path, 'outputs')
     os.makedirs(outputs_path, exist_ok=True)
@@ -294,7 +272,8 @@ if __name__ == "__main__":
     )
     dm.setup()
     dm.prepare_data()    
-    for loader in [dm.train_dataloader(), dm.val_dataloader()]:
+    for loader in [dm.train_dataloader(), dm.val_dataloader(), dm.test_dataloader()]:
+        print(colored(f"Number of batches in dataloader: {len(loader)}", "cyan"))
         for data in loader:
             print(f"Data shape: {data['vil'].shape}")
             break
