@@ -60,7 +60,7 @@ def lr_range_test(model, optimizer, train_dataloader, val_dataloader, criterion,
     fig.savefig(os.path.join(outputs_path, 'lr_range_test.png'))
     lr_finder.reset()
 
-def adamw_optimizer(model, lr, weight_decay):
+def adamw_optimizer(model, lr, weight_decay, beta1=0.9, beta2=0.999):
     """
     https://towardsdatascience.com/weight-decay-and-its-peculiar-effects-66e0aee3e7b8/
     weight_decay in model architecture testing should be 0 since 
@@ -70,7 +70,8 @@ def adamw_optimizer(model, lr, weight_decay):
     if using another regularization like dropout and data augmentations then still needed 
     since dropout forces more robustness and data augmentations forces invariance.
     """
-    return torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+    return torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay, 
+                             betas=(beta1, beta2))
 
 def cosine_warmup_scheduler(opt, start_lr, final_lr, peak_lr, total_steps, warmup_steps):
     """

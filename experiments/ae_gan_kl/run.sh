@@ -4,7 +4,7 @@ set -e
 PYTHON_SCRIPT="/home/vatsal/NWM/weatherforecasting/experiments/ae_gan_kl/train.py"
 SUCCESS_MARKER="done"
 RESUME_FLAG="--resume"
-RESUME=true
+RESUME=false
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -48,8 +48,7 @@ run_with_retry() {
 }
 
 declare -a RUNS=(
-    "experiment_name=ae_gan_kl"
-    "experiment_name=ae_gan_kl_disc_1 lpips.disc_start=0.0 lpips.disc_weight=1.0"
+    "experiment_name=ae_new"
 )
 
 for config in "${RUNS[@]}"; do
