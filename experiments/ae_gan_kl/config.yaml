@@ -1,4 +1,4 @@
-project_name : "ae_gan_night"
+project_name : "ae_test"
 experiment_path : "/home/vatsal/NWM/weatherforecasting/experiments/ae_gan_kl"
 experiment_name : "ae_gan_kl"
 
@@ -21,9 +21,10 @@ lpips:
   disc_num_layers: 3
   use_actnorm: false
   #more losses
-  perceptual_weight: 0.0
-  kl_weight: 1e-6
+  perceptual_weight: 1.0
+  kl_weight: 1e-2
   logvar_init: 0.0  
+  recon_weight: 0.0
 
 # dataset
 dataset:
@@ -42,17 +43,17 @@ dataset:
 # optimizer
 optim:
   lr : 5e-4
-  weight_decay : 1e-3
+  weight_decay : 1e-5
   beta1: 0.9
   beta2: 0.999
   gradient_clip_val : 1.0
 
 # lr scheduler
 cosine_warmup:
-  start_lr: 5e-5
+  start_lr: 5e-4
   peak_lr: 5e-4
-  final_lr: 5e-7
-  warmup_ratio: 0.1
+  final_lr: 5e-4
+  warmup_ratio: 0.0
 
 one_cycle:
   peak_lr : 1e-3
@@ -66,14 +67,14 @@ lr_range_test:
 
 # trainer
 trainer:
-  devices: [0]
-  max_epochs: 50
+  devices: [1]
+  max_epochs: 100
   accumulate_grad_batches: 1
   total_train_steps : -1 # need to be set
   total_val_steps : -1 # need to be set
   total_test_steps : -1 # need to be set
-  save_every_n_steps: 0.01
-  save_on_train_epoch_end: true
+  save_every_n_steps: 0.5
+  save_on_train_epoch_end: false
   limit_train_batches: 0.05
   limit_val_batches: 0.05
   limit_test_batches: 0.05
@@ -82,6 +83,6 @@ trainer:
 # logging
 logging:
   wandb_watch_log_freq: 0
-  log_train_all_metrics_n : 0.01
-  log_train_plots_n : 0.001
-  log_val_plots_n : 0.001
+  log_train_all_metrics_n : 0.1
+  log_train_plots_n : 0.1
+  log_val_plots_n : 0.1

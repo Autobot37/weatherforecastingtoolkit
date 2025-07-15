@@ -24,7 +24,7 @@ gen_loss = rec + disc_factor * w_adapt * L_adv
 os.environ['WANDB_API_KEY'] = '041eda3850f131617ee1d1c9714e6230c6ac4772'    
 
 class Loss(nn.Module):
-    def __init__(self, disc_start, disc_num_layers=3, disc_in_channels=1, disc_weight=1.0, use_actnorm=False, perceptual_weight=1.0, kl_weight=1.0, logvar_init=0.0):
+    def __init__(self, disc_start, disc_num_layers=3, disc_in_channels=64, disc_weight=1.0, use_actnorm=False, perceptual_weight=1.0, kl_weight=1.0, logvar_init=0.0):
         super().__init__()
         self.disc_start = disc_start
         self.disc_weight = disc_weight
@@ -140,51 +140,50 @@ class Autoencoder(nn.Module):
 class Encoder(nn.Module):
     def __init__(self, latent_dim):
         super().__init__()
-        # 16×16 → 8×8 → 4×4 → 2×2 → 1×1
+        # 16×16 → 8×8 → 4×4 → 2×2 → 1×1  (all with convolutions)
         self.conv = nn.Sequential(
-            nn.Conv2d(64, 128, 3, stride=2, padding=1),  # → (B,128, 8, 8)
+            nn.Conv2d(64, 128, 3, stride=2, padding=1),   # (B,128, 8, 8)
             nn.SiLU(inplace=True),
-            nn.Conv2d(128, 256, 3, stride=2, padding=1), # → (B,256, 4, 4)
+            nn.Conv2d(128, 256, 3, stride=2, padding=1),  # (B,256, 4, 4)
             nn.SiLU(inplace=True),
-            nn.Conv2d(256, 512, 3, stride=2, padding=1), # → (B,512, 2, 2)
+            nn.Conv2d(256, 512, 3, stride=2, padding=1),  # (B,512, 2, 2)
             nn.SiLU(inplace=True),
-            nn.Conv2d(512, 512, 3, stride=2, padding=1), # → (B,512, 1, 1)
+            nn.Conv2d(512, 1024, 3, stride=2, padding=1),
             nn.SiLU(inplace=True),
         )
-        self.conv_out = nn.Conv2d(512, 512, 1, 1, 0)     # → (B,512, 1, 1)
-        self.fc       = nn.Linear(512, latent_dim)       # flatten & project
+        self.conv_out = nn.Conv2d(1024, 1024, 1, 1, 0)   # (B,1024, 1, 1)
+        self.fc = nn.Linear(1024, latent_dim)             # (B, latent_dim)
 
     def forward(self, x):
-        x = self.conv(x)                   # (B,512,1,1)
-        x = self.conv_out(x)               # (B,512,1,1)
-        x = x.view(x.size(0), -1)          # (B,512)
-        z = self.fc(x)                     # (B,latent_dim)
+        x = self.conv(x)        # (B,1024,1,1)
+        x = self.conv_out(x)    # (B,1024,1,1)
+        x = x.view(x.size(0), -1)
+        z = self.fc(x)
         return z
 
 class Decoder(nn.Module):
     def __init__(self, latent_dim):
         super().__init__()
-        # project latent → 512×1×1
-        self.fc = nn.Linear(latent_dim, 512)
+        # project latent → 1024×1×1
+        self.fc = nn.Linear(latent_dim, 1024)
 
         # 1×1 → 2×2 → 4×4 → 8×8 → 16×16
         self.deconv = nn.Sequential(
-            nn.ConvTranspose2d(512, 512, 3, stride=2, padding=1, output_padding=1),  # → (B,512,2,2)
+            nn.ConvTranspose2d(1024, 1024, 3, stride=2, padding=1, output_padding=1),  # (B,1024,2,2)
             nn.SiLU(inplace=True),
-            nn.ConvTranspose2d(512, 256, 3, stride=2, padding=1, output_padding=1),  # → (B,256,4,4)
+            nn.ConvTranspose2d(1024, 512, 3, stride=2, padding=1, output_padding=1),   # (B,512,4,4)
             nn.SiLU(inplace=True),
-            nn.ConvTranspose2d(256, 128, 3, stride=2, padding=1, output_padding=1),  # → (B,128,8,8)
+            nn.ConvTranspose2d(512, 256, 3, stride=2, padding=1, output_padding=1),    # (B,256,8,8)
             nn.SiLU(inplace=True),
-            nn.ConvTranspose2d(128,  64, 3, stride=2, padding=1, output_padding=1),  # → (B, 64,16,16)
+            nn.ConvTranspose2d(256, 128, 3, stride=2, padding=1, output_padding=1),    # (B,128,16,16)
             nn.SiLU(inplace=True),
         )
-        # final 1×1 conv + activation
-        self.conv_out = nn.Conv2d(64, 64, 1, 1, 0)  # → (B,64,16,16)
+        self.conv_out = nn.Conv2d(128, 64, 1, 1, 0)  # (B,64,16,16)
 
     def forward(self, z):
-        x = self.fc(z)                     # (B,512)
-        x = x.view(x.size(0), 512, 1, 1)   # (B,512,1,1)
-        x = self.deconv(x)                 # (B,64,16,16)
+        x = self.fc(z)                     # (B,1024)
+        x = x.view(x.size(0), 1024, 1, 1)  # (B,1024,1,1)
+        x = self.deconv(x)                 # (B,128,16,16)
         x = self.conv_out(x)               # (B,64,16,16)
         return x
 

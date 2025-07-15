@@ -230,7 +230,7 @@ def modelcheckpointcallback(run_dir, total_train_steps, save_every_n_steps, save
         filename = "{epoch}-{step:06d}",
         every_n_train_steps = int(total_train_steps * save_every_n_steps),
         save_on_train_epoch_end = save_on_train_epoch_end,
-        save_last= True
+        save_last= True,
     )
 class TrackGradNormCallback(pl.Callback):
     def __init__(self, norm_type=2):

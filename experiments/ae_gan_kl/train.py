@@ -14,6 +14,8 @@ from pytorch_lightning.loggers import WandbLogger
 from pipeline.models.autoencoderkl.custom_akl import AutoencoderKL
 from pipeline.helpers import load_checkpoint_cascast, log_gradients_paramater, modelcheckpointcallback, TrackGradNormCallback \
     , adamw_optimizer, cosine_warmup_scheduler, log_metrics, log_wandb_images, check_yaml, find_latest_ckpt
+from pytorch_msssim import ssim
+
 """
 384x384
 rec = l1
@@ -23,7 +25,7 @@ gen_loss = rec + disc_factor * w_adapt * L_adv
 """
 os.environ['WANDB_API_KEY'] = '041eda3850f131617ee1d1c9714e6230c6ac4772'    
 class Loss(nn.Module):
-    def __init__(self, disc_start, disc_num_layers=3, disc_in_channels=1, disc_weight=1.0, use_actnorm=False, perceptual_weight=1.0, kl_weight=1.0, logvar_init=0.0):
+    def __init__(self, disc_start, disc_num_layers=3, disc_in_channels=1, disc_weight=1.0, use_actnorm=False, perceptual_weight=1.0, kl_weight=1.0, logvar_init=0.0, recon_weight = 1.0):
         super().__init__()
         self.disc_start = disc_start
         self.disc_weight = disc_weight
@@ -39,6 +41,7 @@ class Loss(nn.Module):
 
         self.logvar = nn.Parameter(torch.ones(size=()) * logvar_init)
         self.kl_weight = kl_weight
+        self.recon_weight = recon_weight
 
     def calculate_adaptive_weight(self, nll_loss, disc_loss, last_layer):
         nll_grad = torch.autograd.grad(nll_loss, last_layer, retain_graph=True)[0]
@@ -50,12 +53,14 @@ class Loss(nn.Module):
 
     def forward(self, inputs, reconstructions, posteriors, optimizer_idx, last_layer, split, global_step):
         batch_size = inputs.size(0)
-        rec_loss = F.l1_loss(reconstructions, inputs, reduction="mean")
+        rec_loss = self.recon_weight * F.l1_loss(reconstructions, inputs, reduction="mean")
 
         if self.perceptual_weight > 0:
             inputs_rgb = inputs.repeat(1, 3, 1, 1)
             reconstructions_rgb = reconstructions.repeat(1, 3, 1, 1)
-            perceptual_loss = self.perceptual_loss(reconstructions_rgb, inputs_rgb).mean()
+            # perceptual_loss = self.perceptual_loss(reconstructions_rgb, inputs_rgb).mean()
+            # rec_loss = rec_loss + self.perceptual_weight * perceptual_loss
+            perceptual_loss = 1 - ssim(inputs_rgb, reconstructions_rgb, data_range=1.0)
             rec_loss = rec_loss + self.perceptual_weight * perceptual_loss
 
         nll_loss = rec_loss / torch.exp(self.logvar) + self.logvar
@@ -133,7 +138,8 @@ class Model(pl.LightningModule):
                         use_actnorm=cfg.lpips.use_actnorm,
                         perceptual_weight=cfg.lpips.perceptual_weight,
                         kl_weight=cfg.lpips.kl_weight,
-                        logvar_init=cfg.lpips.logvar_init
+                        logvar_init=cfg.lpips.logvar_init,
+                        recon_weight=cfg.lpips.recon_weight
                         )
         self.input_frames =  cfg.dataset.input_frames
         self.pred_frames = cfg.dataset.pred_frames
@@ -317,6 +323,7 @@ if __name__ == "__main__":
         limit_val_batches=cfg.trainer.limit_val_batches,
         limit_test_batches=cfg.trainer.limit_test_batches,
         log_every_n_steps=cfg.trainer.log_every_n_steps,
+        overfit_batches=1
     )
 
     model = Model(cfg)

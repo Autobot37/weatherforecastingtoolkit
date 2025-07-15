@@ -7,3 +7,5 @@ setup(
     author='bagri',
     packages=find_packages(),
 )
+
+#!pip install -e .

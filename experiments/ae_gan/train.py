@@ -77,7 +77,7 @@ class ResidualBlock(nn.Module):
         return self.act2(out)
 
 class UpsampleBlock(nn.Module):
-    def __init__(self, in_ch, out_ch, scale_factor):
+    def __init__(self, in_ch, out_ch, scale_factor=2):
         super().__init__()
         self.upsample = nn.Upsample(scale_factor=scale_factor, mode='nearest')
         self.resblock = ResidualBlock(in_ch, out_ch, stride=1)
@@ -93,8 +93,12 @@ class ConvAutoencoder(nn.Module):
         self.enc1 = ResidualBlock(in_ch,   64, stride=2)  # 128 → 64
         self.enc2 = ResidualBlock(64,     128, stride=2)  # 64 → 32
         self.enc3 = ResidualBlock(128,    256, stride=2)  # 32 → 16
-        self.enc4 = ResidualBlock(256,    512, stride=4)  # 16 → 4
-        self.enc5 = ResidualBlock(512,   1024, stride=4)  # 4 → 1
+        # self.enc4 = ResidualBlock(256,    512, stride=4)  # 16 → 4
+        # self.enc5 = ResidualBlock(512,   1024, stride=4)  # 4 → 1
+        self.enc4 = ResidualBlock(256,    512, stride=2)  # 16 → 8
+        self.enc5 = ResidualBlock(512,   1024, stride=2)  # 8 → 4
+        self.enc6 = ResidualBlock(1024 , 1024, stride=2)  # 4 → 2
+        self.enc7 = ResidualBlock(1024, 1024, stride=2)  # 2 → 1
 
         self.flatten = nn.Flatten()                     # (B,1024,1,1) → (B,1024)
         self.fc_enc = nn.Linear(1024, latent_dim)
@@ -104,12 +108,18 @@ class ConvAutoencoder(nn.Module):
         self.dec_init_conv = ResidualBlock(1024, 1024, stride=1)
 
         # Decoder: 1 → 4 → 16 → 32 → 64 → 128
-        self.dec1 = UpsampleBlock(1024, 512, scale_factor=4)  # 1 → 4
-        self.dec2 = UpsampleBlock(512,  256, scale_factor=4)  # 4 → 16
-        self.dec3 = UpsampleBlock(256,  128, scale_factor=2)  # 16 → 32
-        self.dec4 = UpsampleBlock(128,   64, scale_factor=2)  # 32 → 64
+        # self.dec1 = UpsampleBlock(1024, 512, scale_factor=4)  # 1 → 4
+        # self.dec2 = UpsampleBlock(512,  256, scale_factor=4)  # 4 → 16
+        # self.dec3 = UpsampleBlock(256,  128, scale_factor=2)  # 16 → 32
+        # self.dec4 = UpsampleBlock(128,   64, scale_factor=2)  # 32 → 64
+        self.dec1 = UpsampleBlock(1024, 512, scale_factor=2)  # 1 → 2
+        self.dec2 = UpsampleBlock(512,  256, scale_factor=2)  # 2 → 4
+        self.dec3 = UpsampleBlock(256,  128, scale_factor=2)  # 4 → 8
+        self.dec4 = UpsampleBlock(128,   64, scale_factor=2)  # 8 → 16
+        self.dec5 = UpsampleBlock(64,   64, scale_factor=2)  # 16 → 32
+        self.dec6 = UpsampleBlock(64,   64, scale_factor=2)  # 32 → 64
+        self.dec7 = UpsampleBlock(64,   64, scale_factor=2)  # 64 → 128
         
-        self.final_upsample = nn.Upsample(scale_factor=2, mode='nearest') # 64 → 128
         self.final_conv = nn.Conv2d(64, in_ch, kernel_size=3, stride=1, padding=1)
 
     def encode(self, x):
@@ -118,6 +128,8 @@ class ConvAutoencoder(nn.Module):
         x = self.enc3(x)
         x = self.enc4(x)
         x = self.enc5(x)
+        x = self.enc6(x)
+        x = self.enc7(x)
         x = self.flatten(x)
         z = self.fc_enc(x)
         return z
@@ -130,7 +142,9 @@ class ConvAutoencoder(nn.Module):
         x = self.dec2(x)
         x = self.dec3(x)
         x = self.dec4(x)
-        x = self.final_upsample(x)
+        x = self.dec5(x)
+        x = self.dec6(x)
+        x = self.dec7(x)
         x = self.final_conv(x)
         return x
 
@@ -139,6 +153,69 @@ class ConvAutoencoder(nn.Module):
         reconstruction = self.decode(z)
         return reconstruction, z
 
+class ConvAutoencoderBIG(nn.Module):
+    def __init__(self,
+                 in_ch: int = 1,
+                 latent_dim: int = 2048):
+        super().__init__()
+
+        # ---------- Encoder ----------
+        # 128 -> 64 -> 32 -> 16 -> 8 -> 4 -> 2 -> 1
+        self.enc1 = ResidualBlock(in_ch,   64,  stride=2)  # 128→64
+        self.enc2 = ResidualBlock(64,     128, stride=2)   # 64→32
+        self.enc3 = ResidualBlock(128,    256, stride=2)   # 32→16
+        self.enc4 = ResidualBlock(256,    512, stride=2)   # 16→8
+        self.enc5 = ResidualBlock(512,   1024, stride=2)   # 8→4
+        self.enc6 = ResidualBlock(1024,  2048, stride=2)   # 4→2
+        self.enc7 = ResidualBlock(2048,  2048, stride=2)   # 2→1  (B,2048,1,1)
+
+        self.flatten = nn.Flatten()            # (B,2048)
+        self.fc_enc  = nn.Linear(2048, latent_dim)
+
+        # ---------- Decoder ----------
+        self.fc_dec  = nn.Linear(latent_dim, 2048)
+        self.unflatten = nn.Unflatten(1, (2048, 1, 1))
+
+        # 1 -> 2 -> 4 -> 8 -> 16 -> 32 -> 64 -> 128
+        self.dec1 = UpsampleBlock(2048, 1024)  # 1→2
+        self.dec2 = UpsampleBlock(1024,  512)  # 2→4
+        self.dec3 = UpsampleBlock(512,   256)  # 4→8
+        self.dec4 = UpsampleBlock(256,   128)  # 8→16
+        self.dec5 = UpsampleBlock(128,    64)  # 16→32
+        self.dec6 = UpsampleBlock(64,     64)  # 32→64
+        self.dec7 = UpsampleBlock(64,     32)  # 64→128
+        self.final_conv = nn.Conv2d(32, in_ch, 3, 1, 1)
+
+    # ---------- Forward helpers ----------
+    def encode(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.enc1(x)
+        x = self.enc2(x)
+        x = self.enc3(x)
+        x = self.enc4(x)
+        x = self.enc5(x)
+        x = self.enc6(x)
+        x = self.enc7(x)
+        x = self.flatten(x)
+        return self.fc_enc(x)
+
+    def decode(self, z: torch.Tensor) -> torch.Tensor:
+        x = self.fc_dec(z)
+        x = self.unflatten(x)
+        x = self.dec1(x)
+        x = self.dec2(x)
+        x = self.dec3(x)
+        x = self.dec4(x)
+        x = self.dec5(x)
+        x = self.dec6(x)
+        x = self.dec7(x)
+        x = self.final_conv(x)
+        return x
+
+    def forward(self, x: torch.Tensor):
+        z = self.encode(x)
+        recon = self.decode(z)
+        return recon, z
+    
 class ConvAutoencoder2(nn.Module):
     def __init__(self, in_ch=1, latent_dim=256):
         super().__init__()
@@ -255,7 +332,7 @@ class AttentionChargedAutoencoder(nn.Module):
         return self.decode(z), z
     
 class Loss(nn.Module):
-    def __init__(self, disc_start, disc_num_layers=3, disc_in_channels=1, disc_weight=1.0, use_actnorm=False, perceptual_weight=1.0):
+    def __init__(self, disc_start, disc_num_layers=3, disc_in_channels=1, disc_weight=1.0, use_actnorm=False, perceptual_weight=1.0, recon_weight=1.0):
         super().__init__()
         self.disc_start = disc_start
         self.disc_weight = disc_weight
@@ -268,6 +345,7 @@ class Loss(nn.Module):
 
         self.perceptual_loss = LPIPS().eval()
         self.perceptual_weight = perceptual_weight
+        self.recon_weight = recon_weight
 
     def calculate_adaptive_weight(self, rec_loss, disc_loss, last_layer):
         rec_grad = torch.autograd.grad(rec_loss, last_layer, retain_graph=True)[0]
@@ -278,7 +356,7 @@ class Loss(nn.Module):
         return d_weight
 
     def forward(self, inputs, reconstructions, optimizer_idx, last_layer, split, global_step):
-        rec_loss = F.l1_loss(reconstructions, inputs, reduction="mean")
+        rec_loss = self.recon_weight * F.l1_loss(reconstructions, inputs, reduction="mean")
 
         if self.perceptual_weight > 0:
             inputs_rgb = inputs.repeat(1, 3, 1, 1)
@@ -329,7 +407,7 @@ class Model(pl.LightningModule):
         self.cfg = cfg
 
         if cfg.model.name == "convautoencoder":
-            self.autoencoder = ConvAutoencoder(latent_dim=cfg.ConvAutoencoder.latent_dim)
+            self.autoencoder = ConvAutoencoderBIG(latent_dim=cfg.ConvAutoencoder.latent_dim)
         elif cfg.model.name == "convautoencoder2":
             self.autoencoder = ConvAutoencoder2(latent_dim=cfg.ConvAutoencoder2.latent_dim)
         elif cfg.model.name == "attentionchargedautoencoder":
@@ -343,6 +421,7 @@ class Model(pl.LightningModule):
                         disc_weight=cfg.lpips.disc_weight, 
                         use_actnorm=cfg.lpips.use_actnorm,
                         perceptual_weight=cfg.lpips.perceptual_weight,
+                        recon_weight=cfg.lpips.recon_weight
                         )
         self.input_frames =  cfg.dataset.input_frames
         self.pred_frames = cfg.dataset.pred_frames
@@ -509,6 +588,7 @@ if __name__ == "__main__":
         limit_val_batches=cfg.trainer.limit_val_batches,
         limit_test_batches=cfg.trainer.limit_test_batches,
         log_every_n_steps=cfg.trainer.log_every_n_steps,
+        overfit_batches=1
     )
 
     model = Model(cfg)

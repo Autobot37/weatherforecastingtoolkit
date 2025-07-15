@@ -4,7 +4,7 @@ set -e
 PYTHON_SCRIPT="/home/vatsal/NWM/weatherforecasting/experiments/pretrained_ae_conv_disc/train.py"
 SUCCESS_MARKER="done"
 RESUME_FLAG="--resume"
-RESUME=false
+RESUME=true
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -48,19 +48,16 @@ run_with_retry() {
 }
 
 declare -a RUNS=(
-    # # Config 1: Conservative setup - low peak lr, late disc start, low disc weight
-    # "experiment_name=pae_6e6_04_05_09_w1 cosine_warmup.peak_lr=5e-6 cosine_warmup.start_lr=5e-7 cosine_warmup.final_lr=5e-8 lpips.disc_start=0.4 lpips.disc_peak_lr=5e-6 lpips.disc_start_lr=5e-7 lpips.disc_final_lr=5e-8 lpips.disc_beta1=0.5 lpips.disc_weight=1.0 optim.lr=5e-6 optim.beta1=0.9"
+    # Config 1: Conservative setup - low peak lr, late disc start, low disc weight
+    "experiment_name=pae_6e6_04_05_09_w1 cosine_warmup.peak_lr=5e-6 cosine_warmup.start_lr=5e-7 cosine_warmup.final_lr=5e-8 lpips.disc_start=0.4 lpips.disc_peak_lr=5e-6 lpips.disc_start_lr=5e-7 lpips.disc_final_lr=5e-8 lpips.disc_beta1=0.5 lpips.disc_weight=1.0 optim.lr=5e-6 optim.beta1=0.9"
     
-    # # Config 2: Aggressive setup - high peak lr, early disc start, high disc weight
-    # "experiment_name=pae_4e4_01_05_05_w2 cosine_warmup.peak_lr=5e-4 cosine_warmup.start_lr=5e-5 cosine_warmup.final_lr=5e-7 lpips.disc_start=0.1 lpips.disc_peak_lr=5e-4 lpips.disc_start_lr=5e-5 lpips.disc_final_lr=5e-7 lpips.disc_beta1=0.5 lpips.disc_weight=2.0 optim.lr=5e-4 optim.beta1=0.5"
+    # Config 3: Balanced mid-range - medium peak lr, medium disc start, high disc weight
+    "experiment_name=pae_5e5_02_09_09_w2 cosine_warmup.peak_lr=5e-5 cosine_warmup.start_lr=5e-6 cosine_warmup.final_lr=5e-8 lpips.disc_start=0.2 lpips.disc_peak_lr=5e-5 lpips.disc_start_lr=5e-6 lpips.disc_final_lr=5e-8 lpips.disc_beta1=0.9 lpips.disc_weight=2.0 optim.lr=5e-5 optim.beta1=0.9"
     
-    # # Config 3: Balanced mid-range - medium peak lr, medium disc start, high disc weight
-    # "experiment_name=pae_5e5_02_09_09_w2 cosine_warmup.peak_lr=5e-5 cosine_warmup.start_lr=5e-6 cosine_warmup.final_lr=5e-8 lpips.disc_start=0.2 lpips.disc_peak_lr=5e-5 lpips.disc_start_lr=5e-6 lpips.disc_final_lr=5e-8 lpips.disc_beta1=0.9 lpips.disc_weight=2.0 optim.lr=5e-5 optim.beta1=0.9"
+    # Config 4: High lr with conservative disc and low disc weight
+    "experiment_name=pae_4e4_04_09_05_w1 cosine_warmup.peak_lr=5e-4 cosine_warmup.start_lr=5e-5 cosine_warmup.final_lr=5e-7 lpips.disc_start=0.4 lpips.disc_peak_lr=5e-5 lpips.disc_start_lr=5e-6 lpips.disc_final_lr=5e-8 lpips.disc_beta1=0.9 lpips.disc_weight=1.0 optim.lr=5e-4 optim.beta1=0.5"
     
-    # # Config 4: High lr with conservative disc and low disc weight
-    # "experiment_name=pae_4e4_04_09_05_w1 cosine_warmup.peak_lr=5e-4 cosine_warmup.start_lr=5e-5 cosine_warmup.final_lr=5e-7 lpips.disc_start=0.4 lpips.disc_peak_lr=5e-5 lpips.disc_start_lr=5e-6 lpips.disc_final_lr=5e-8 lpips.disc_beta1=0.9 lpips.disc_weight=1.0 optim.lr=5e-4 optim.beta1=0.5"
-    
-    # Config 5: Low lr with aggressive disc and high disc weight
+    # # Config 5: Low lr with aggressive disc and high disc weight
     "experiment_name=pae_6e6_01_05_05_w2 cosine_warmup.peak_lr=5e-6 cosine_warmup.start_lr=5e-7 cosine_warmup.final_lr=5e-8 lpips.disc_start=0.1 lpips.disc_peak_lr=5e-4 lpips.disc_start_lr=5e-5 lpips.disc_final_lr=5e-7 lpips.disc_beta1=0.5 lpips.disc_weight=2.0 optim.lr=5e-6 optim.beta1=0.5"
     
     # Config 6: Medium lr, early disc start, low disc weight
