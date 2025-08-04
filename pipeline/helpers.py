@@ -152,20 +152,22 @@ def log_metrics(predictions, targets, tag, pl_module):
     metrics = {f"{tag}_{k}": v for k, v in metrics.items()}
     pl_module.log_dict(metrics, on_step=True, on_epoch=True, sync_dist=True)
 
-def log_wandb_images(predicted, target, label, pl_module):
+def log_wandb_images(predicted, target, label, pl_module, batch_idxs=4):
     """
-    input : predicted, target in B T H W or B T C H W(c==1) [0, 1]
-    output: batch_idx 0 - predicted, target, difference(reds)
+    input : predicted, target in B T H W or B T C H W (c==1) [0, 1]
+    output: Log separate images for first `batch_idxs` samples
     """
     predicted = predicted.detach().cpu()
     target = target.detach().cpu()
 
+    # Check range validity
     in_range = ((target >= 0) & (target <= 1)).sum().item()
     total_elems = target.numel()
     ratio = in_range / total_elems
     if ratio < 0.9:
         print(f"\033[91mtarget data not in [0,1] range: {ratio:.2%}\033[0m")
 
+    # Remove channel dim if present
     if predicted.ndim == 5:
         assert predicted.shape[2] == 1, "Predicted must be (B,T,1,H,W)"
         predicted = predicted.squeeze(2)
@@ -173,46 +175,54 @@ def log_wandb_images(predicted, target, label, pl_module):
         assert target.shape[2] == 1, "Target must be (B,T,1,H,W)"
         target = target.squeeze(2)
 
+    # Clamp batch_idxs to available size
+    batch_idxs = min(batch_idxs, predicted.shape[0])
+
     target_np = (target.clamp(0,1) * 255).numpy().astype('uint8')
     pred_np = (predicted.clamp(0,1) * 255).numpy().astype('uint8')
     diff_np = abs(target_np.astype(float) - pred_np.astype(float)).clip(0,255).astype('uint8')
 
     B, T, H, W = target_np.shape
-    fig, axes = plt.subplots(3, T, figsize=(4*T, 12))
-    if T == 1:
-        axes = axes.reshape(3, 1)
-    
+
     cmap, norm, _, _ = vil_cmap()
 
-    for t in range(T):
-        ax0 = axes[0, t]
-        im0 = ax0.imshow(target_np[0, t], cmap=cmap, norm=norm)
-        ax0.set_title(f'Time {t}: Original')
-        ax0.axis('off')
-        plt.colorbar(im0, ax=ax0, fraction=0.046, pad=0.04)
+    # ---- log each batch as separate figure ----
+    for b in range(batch_idxs):
+        fig, axes = plt.subplots(3, T, figsize=(4*T, 12))
+        if T == 1:
+            axes = axes.reshape(3, 1)
 
-        # Reconstruction
-        ax1 = axes[1, t]
-        im1 = ax1.imshow(pred_np[0, t], cmap=cmap, norm=norm)
-        ax1.set_title(f'Time {t}: Reconstruction')
-        ax1.axis('off')
-        plt.colorbar(im1, ax=ax1, fraction=0.046, pad=0.04)
+        for t in range(T):
+            # Original
+            ax0 = axes[0, t]
+            im0 = ax0.imshow(target_np[b, t], cmap=cmap, norm=norm)
+            ax0.set_title(f'Batch {b}, Time {t}: Original')
+            ax0.axis('off')
+            plt.colorbar(im0, ax=ax0, fraction=0.046, pad=0.04)
 
-        # Difference
-        ax2 = axes[2, t]
-        im2 = ax2.imshow(diff_np[0, t], cmap='Reds', vmin=0, vmax=255)
-        ax2.set_title(f'Time {t}: Abs Diff')
-        ax2.axis('off')
-        plt.colorbar(im2, ax=ax2, fraction=0.046, pad=0.04)
+            # Reconstruction
+            ax1 = axes[1, t]
+            im1 = ax1.imshow(pred_np[b, t], cmap=cmap, norm=norm)
+            ax1.set_title(f'Batch {b}, Time {t}: Reconstruction')
+            ax1.axis('off')
+            plt.colorbar(im1, ax=ax1, fraction=0.046, pad=0.04)
 
-    plt.tight_layout()
+            # Difference
+            ax2 = axes[2, t]
+            im2 = ax2.imshow(diff_np[b, t], cmap='Reds', vmin=0, vmax=255)
+            ax2.set_title(f'Batch {b}, Time {t}: Abs Diff')
+            ax2.axis('off')
+            plt.colorbar(im2, ax=ax2, fraction=0.046, pad=0.04)
 
-    if isinstance(pl_module.logger, WandbLogger):
-        wandb_image = wandb.Image(fig, caption=label)
-        pl_module.logger.experiment.log({label: [wandb_image],
-                                         'global_step': pl_module.global_step})
+        plt.tight_layout()
 
-    plt.close(fig)
+        if isinstance(pl_module.logger, WandbLogger):
+            wandb_image = wandb.Image(fig, caption=f"{label} (batch {b})")
+            pl_module.logger.experiment.log({
+                f"{label}": wandb_image,
+                'global_step': pl_module.global_step
+            })
+        plt.close(fig)
 
 def log_gradients_paramater(model, total_train_steps, wandb_watch_log_freq, logger):
     """
