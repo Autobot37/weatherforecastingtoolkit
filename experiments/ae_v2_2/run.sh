@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-PYTHON_SCRIPT="/home/vatsal/NWM/weatherforecasting/experiments/ae_v2_2/train.py"
+PYTHON_SCRIPT="/home/vatsal/NWM/weatherforecasting/experiments/ae_v2_2/train_data2.py"
 SUCCESS_MARKER="done"
 RESUME_FLAG="--resume"
 RESUME=false

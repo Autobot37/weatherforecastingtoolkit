@@ -1,12 +1,12 @@
 import torch
 from collections import OrderedDict
-from termcolor import colored
 from torch_lr_finder import LRFinder, TrainDataLoaderIter, ValDataLoaderIter
 import os
 from pipeline.metrics import calc_metrics
 from pytorch_lightning.loggers import WandbLogger
 import pytorch_lightning as pl
 import wandb
+from termcolor import colored
 import matplotlib.pyplot as plt
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pipeline.datasets.sevir.sevir import vil_cmap
@@ -265,17 +265,13 @@ def check_yaml(cfg, cli_cfg, path=""):
         if isinstance(cli_cfg[k], dict) and isinstance(cfg[k], dict):
             check_yaml(cfg[k], cli_cfg[k], full_key)
 
-import os
-from termcolor import colored
-
 def find_latest_ckpt(cfg):
     wandb_dir = os.path.join(cfg.experiment_path, 'outputs', cfg.experiment_name, 'wandb')
     if not os.path.exists(wandb_dir):
         return None, None
 
-    latest_ckpt = None
-    latest_mtime = -1
-    run_id = None
+    # Collect all checkpoint paths with their mtimes and run_ids
+    ckpt_entries = []
 
     for run_dir in os.listdir(wandb_dir):
         run_path = os.path.join(wandb_dir, run_dir)
@@ -285,17 +281,21 @@ def find_latest_ckpt(cfg):
             continue
 
         for fname in os.listdir(ckpt_dir):
-            if not fname.endswith(".ckpt"):
-                continue
-
-            fpath = os.path.join(ckpt_dir, fname)
-            mtime = os.path.getmtime(fpath)
-            if mtime > latest_mtime:
-                latest_mtime = mtime
-                latest_ckpt = fpath
+            if fname.endswith(".ckpt"):
+                fpath = os.path.join(ckpt_dir, fname)
+                mtime = os.path.getmtime(fpath)
                 run_id = run_dir.split("-")[-1]
+                ckpt_entries.append((mtime, fpath, run_id))
 
-    if latest_ckpt is None:
-        return None, None
+    # Sort by most recent first
+    ckpt_entries.sort(reverse=True)
 
-    return latest_ckpt, run_id
+    # Try loading each checkpoint until one works
+    for _, fpath, run_id in ckpt_entries:
+        try:
+            _ = torch.load(fpath, map_location='cpu')
+            return fpath, run_id
+        except Exception as e:
+            continue  # Try next
+
+    return None, None

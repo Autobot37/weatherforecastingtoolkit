@@ -7,17 +7,50 @@ import torch.nn.functional as F
 import pytorch_lightning as pl
 from omegaconf import OmegaConf
 from termcolor import colored
-from pipeline.models.autoencoderkl.autoencoder_kl import AutoencoderKL
-from pipeline.datasets.sevir.sevir import SEVIRLightningDataModule
+from pipeline.datasets.sevire.sevir import SEVIRLightningDataModule
 from pytorch_lightning.callbacks import LearningRateMonitor
 from pytorch_lightning.loggers import WandbLogger
-from pipeline.helpers import load_checkpoint_cascast, log_gradients_paramater, modelcheckpointcallback \
-    , adamw_optimizer, cosine_warmup_scheduler, log_metrics, log_wandb_images
-"""
-384x384
-"""
+from pipeline.models.autoencoderkl.autoencoder_kl import AutoencoderKL
+from pipeline.helpers import modelcheckpointcallback, TrackGradNormCallback \
+    , adamw_optimizer, cosine_warmup_scheduler, log_metrics, log_wandb_images, check_yaml, find_latest_ckpt
 
-os.environ['WANDB_API_KEY'] = '041eda3850f131617ee1d1c9714e6230c6ac4772'
+os.environ['WANDB_API_KEY'] = '041eda3850f131617ee1d1c9714e6230c6ac4772'    
+
+class Autoencoder(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.autoencoder = AutoencoderKL(**config)
+        self.autoencoder.load_state_dict(torch.load("/home/vatsal/NWM/pretrained_sevirlr_vae_8x8x64_v1.pt", weights_only=False), strict=True)
+        self.autoencoder.eval()
+        self.autoencoder.requires_grad_(False)
+        for param in self.autoencoder.parameters():
+            param.requires_grad = False
+
+    @torch.no_grad()
+    def encode(self, x):
+        # x: (B, T, C, H, W)
+        B, T, C, H, W = x.shape
+        out = []
+        for i in range(T):
+            frame = x[:, i]  # (B, C, H, W)
+            z = self.autoencoder.encode(frame).sample()
+            out.append(z.unsqueeze(1))
+        return torch.cat(out, dim=1)
+        # out = self.autoencoder.encode(x.reshape(B*T, C, H, W)).mode()
+        # return out.reshape(B, T, 4, 48, 48)
+
+    @torch.no_grad()
+    def decode(self, x):
+        # x: (B, T, latent_C, H, W)
+        B, T, C, H, W = x.shape
+        out = []
+        for i in range(T):
+            frame = x[:, i]
+            dec = self.autoencoder.decode(frame)
+            out.append(dec.unsqueeze(1))
+        return torch.cat(out, dim=1)
+        # out = self.autoencoder.decode(x.reshape(B*T, C, H, W))
+        # return out.reshape(B, T, 1, 384, 384)
 
 class moving_avg(nn.Module):
     """
@@ -99,60 +132,27 @@ class DLinear(nn.Module):
         x = seasonal_output + trend_output
         return x.permute(0,2,1) # to [Batch, Output length, Channel]
 
-class Autoencoder(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.autoencoder = AutoencoderKL(**config)
-        self.autoencoder.eval() 
-        self.scaling_factor = 0.18125
-        load_checkpoint_cascast("/home/vatsal/NWM/PreDiff/scripts/vae/sevirlr/autoencoder_ckpt.pth", self.autoencoder)
-        for param in self.autoencoder.parameters():
-            param.requires_grad = False
-        self.autoencoder.requires_grad_(False)
-
-    @torch.no_grad()
-    def encode(self, x):
-        # x: (B, T, C, H, W)
-        B, T, C, H, W = x.shape
-        out = []
-        for i in range(T):
-            frame = x[:, i]  # (B, C, H, W)
-            z = self.autoencoder.encode(frame).sample()
-            out.append(z.unsqueeze(1))
-        return torch.cat(out, dim=1)
-        # out = self.autoencoder.encode(x.reshape(B*T, C, H, W)).mode()
-        # return out.reshape(B, T, 4, 48, 48)
-
-    @torch.no_grad()
-    def decode(self, x):
-        # x: (B, T, latent_C, H, W)
-        B, T, C, H, W = x.shape
-        out = []
-        for i in range(T):
-            frame = x[:, i]
-            dec = self.autoencoder.decode(frame)
-            out.append(dec.unsqueeze(1))
-        return torch.cat(out, dim=1)
-        # out = self.autoencoder.decode(x.reshape(B*T, C, H, W))
-        # return out.reshape(B, T, 1, 384, 384)
-
 class Model(pl.LightningModule):
     def __init__(self, cfg):
         super().__init__()
         self.save_hyperparameters(cfg)
         self.cfg = cfg
-        self.autoencoder = Autoencoder(cfg.autoencoder)
+        self.autoencoder = Autoencoder(cfg.ae_kl)
+
+        self.predictor = DLinear(cfg.dlinear)
+
+        self.loss = nn.MSELoss()
+    
         self.input_frames =  cfg.dataset.input_frames
         self.pred_frames = cfg.dataset.pred_frames
         self.total_steps = cfg.trainer.total_train_steps
-        self.predictor = DLinear(cfg.dlinear)
 
     def forward(self, x):
         out = self.predictor(x)
         return out
 
     def training_step(self, batch, batch_idx):
-        v = batch.permute(0,3,1,2).unsqueeze(2)
+        v = batch['vil']
         v = self.autoencoder.encode(v)  # (B, T, LC, LH, LW)
         b, t, c, h, w = v.shape
         inp, tgt = v[:, :self.input_frames], v[:, self.input_frames:]
@@ -164,22 +164,10 @@ class Model(pl.LightningModule):
         loss = F.mse_loss(pred, tgt)
         self.log('train_loss', loss, prog_bar=True, on_step=True, on_epoch=True, sync_dist=True)
 
-        log_interval = int(self.cfg.logging.log_train_all_metrics_n * self.cfg.trainer.total_train_steps)
-        if batch_idx % log_interval == 0:
-            pred = pred + inp_t
-            tgt = tgt + inp_t
-
-            decoded_pred = self.autoencoder.decode(pred)
-            decoded_tgt = self.autoencoder.decode(tgt)
-            log_metrics(decoded_pred, decoded_tgt, "train", self)
-
-        plot_interval = int(self.cfg.logging.log_train_plots_n * self.cfg.trainer.total_val_steps)
-        if (self.current_epoch * self.cfg.trainer.total_val_steps + batch_idx) % plot_interval == 0:
-            log_wandb_images(decoded_pred, decoded_tgt, f"Train Reconstruction vs Original_epoch_{self.current_epoch}_batch_{batch_idx}", self)
         return loss
     
     def validation_step(self, batch, batch_idx):
-        v = batch.permute(0,3,1,2).unsqueeze(2)
+        v = batch['vil']
         v = self.autoencoder.encode(v)
         b, t, c, h, w = v.shape
         inp, tgt = v[:, :self.input_frames], v[:, self.input_frames:]
@@ -204,7 +192,7 @@ class Model(pl.LightningModule):
         return loss
 
     def test_step(self, batch, batch_idx):
-        v = batch.permute(0,3,1,2).unsqueeze(2)
+        v = batch['vil']
         v = self.autoencoder.encode(v)
         b, t, c, h, w = v.shape
         inp, tgt = v[:, :self.input_frames], v[:, self.input_frames:]
@@ -229,34 +217,54 @@ class Model(pl.LightningModule):
         return loss
         
     def configure_optimizers(self):
-        opt = adamw_optimizer(self.predictor, self.cfg.optim.lr, self.cfg.optim.weight_decay)
+        opt = adamw_optimizer(self.predictor, self.cfg.optim.lr, self.cfg.optim.weight_decay, 
+                                 beta1=self.cfg.optim.beta1, beta2=self.cfg.optim.beta2)
         sch_params = self.cfg.cosine_warmup
         warmup_steps = sch_params.warmup_ratio * self.total_steps
         sch = cosine_warmup_scheduler(opt, sch_params.start_lr, sch_params.final_lr, sch_params.peak_lr, self.total_steps, warmup_steps)
-        return {"optimizer": opt, "lr_scheduler": {"scheduler": sch, "interval": "step"}}
-    
+
+        return {"optimizer": opt, "lr_scheduler": {"scheduler": sch, "interval": "step", "frequency": 1}}
+            
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--resume", type=str, default=None)
-    parser.add_argument("--run_id", type=str, default=None)
-    args = parser.parse_args()
-    resume_ckpt = args.resume
-    run_id = args.run_id
-    if run_id is not None:
-        print(colored(f"Resuming from checkpoint: {resume_ckpt} with run_id: {run_id}", "green"))
+    parser.add_argument("--resume", type=bool, default=False, help="Resume training from checkpoint")
+    args, unknown = parser.parse_known_args()
 
     torch.backends.cudnn.benchmark = True 
     torch.set_float32_matmul_precision('high')
 
-    cfg_path = os.path.join(os.path.dirname(__file__), "config.yaml")
-    cfg = OmegaConf.load(cfg_path)
+    config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
+    cfg = OmegaConf.load(config_path)
+
+    cli_cfg = OmegaConf.from_dotlist(unknown)
+    check_yaml(cfg, cli_cfg)
+    cfg = OmegaConf.merge(cfg, cli_cfg)
+
+    if args.resume:
+        ckpt_path, run_id = find_latest_ckpt(cfg)
+        if ckpt_path is None:
+            args.resume = False
+            print(colored("No checkpoint found, starting from scratch.", "yellow"))
+        else:
+            print(colored(f"Resuming from checkpoint: {ckpt_path} with run id {run_id}", "green"))
+
     outputs_path = os.path.join(cfg.experiment_path, 'outputs')
     os.makedirs(outputs_path, exist_ok=True)
 
-    dm = SEVIRLightningDataModule(cfg.dataset); dm.setup()
-    for loader in [dm.train_dataloader(), dm.val_dataloader()]:
+    dm = SEVIRLightningDataModule(
+        dataset_name=cfg.dataset.name,
+        num_workers=cfg.dataset.num_workers,
+        batch_size=cfg.dataset.batch_size,
+        seq_len=cfg.dataset.seq_len,
+        stride=cfg.dataset.stride,
+        layout='NTCHW'
+    )
+    dm.setup()
+    dm.prepare_data()    
+    for loader in [dm.train_dataloader(), dm.val_dataloader(), dm.test_dataloader()]:
+        print(colored(f"Number of batches in dataloader: {len(loader)}", "cyan"))
         for data in loader:
-            print(f"Data shape: {data.shape}")
+            print(f"Data shape: {data['vil'].shape}")
             break
 
     total_train_steps = (len(dm.train_dataloader()) * cfg.trainer.max_epochs) / cfg.trainer.accumulate_grad_batches
@@ -271,8 +279,11 @@ if __name__ == "__main__":
         cfg.trainer.total_val_steps = total_val_steps * cfg.trainer.limit_val_batches
     if cfg.trainer.limit_test_batches is not None:
         cfg.trainer.total_test_steps = total_test_steps * cfg.trainer.limit_test_batches
+    cfg.lpips.disc_start = int(cfg.lpips.disc_start * cfg.trainer.total_train_steps)
 
-    logger = WandbLogger(project = cfg.project_name, name = cfg.experiment_name, save_dir = os.path.join(cfg.experiment_path, 'outputs'), id = run_id, resume = "allow")
+    exp_name = cfg.experiment_name
+    save_dir = os.path.join(cfg.experiment_path, 'outputs', exp_name)
+    logger = WandbLogger(project = cfg.project_name, name = cfg.experiment_name, save_dir = save_dir, resume = "allow", id = run_id if args.resume else None)
     run_id = logger.experiment.id
     run_dir = logger.experiment.dir
     artifact = wandb.Artifact(cfg.experiment_name, type="code")
@@ -286,18 +297,18 @@ if __name__ == "__main__":
         max_epochs=cfg.trainer.max_epochs, 
         accelerator='gpu', 
         devices=cfg.trainer.devices,
-        gradient_clip_val=1.0,
-        callbacks=[checkpoint_callback, lr_monitor_callback],
+        strategy="auto",
+        callbacks=[checkpoint_callback, lr_monitor_callback, TrackGradNormCallback()],
         logger=logger,
         limit_train_batches=cfg.trainer.limit_train_batches,
         limit_val_batches=cfg.trainer.limit_val_batches,
         limit_test_batches=cfg.trainer.limit_test_batches,
-        accumulate_grad_batches=cfg.trainer.accumulate_grad_batches,
         log_every_n_steps=cfg.trainer.log_every_n_steps,
+        profiler = 'simple',
+        fast_dev_run=True
     )
 
     model = Model(cfg)
-    log_gradients_paramater(model, cfg.trainer.total_train_steps, cfg.logging.wandb_watch_log_freq, logger)
-
-    trainer.fit(model, dm, ckpt_path=resume_ckpt)
+    trainer.fit(model, dm, ckpt_path=ckpt_path if args.resume else None)
+    trainer.test(model, dm)
     print("done")

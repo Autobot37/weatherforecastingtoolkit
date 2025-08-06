@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -e
 
-PYTHON_SCRIPT="/home/vatsal/NWM/weatherforecasting/experiments/use_ae/train.py"
+PYTHON_SCRIPT="/home/vatsal/NWM/weatherforecasting/experiments/ae_s2/train.py"
 SUCCESS_MARKER="done"
 RESUME_FLAG="--resume"
-RESUME=false
+RESUME=true
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -47,10 +47,10 @@ run_with_retry() {
     done
 }
 
-TASKSET_CMD="taskset -c 0-8"
+TASKSET_CMD="taskset -c 9-17"
 
 declare -a RUNS=(
-    project_name=ae_test_v2
+    project_name=ae_s2
 )
 
 for config in "${RUNS[@]}"; do
