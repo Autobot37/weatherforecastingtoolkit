@@ -131,7 +131,8 @@ The most promising next step combines **structured latent forecasting** with **p
 ## More Details
 
 See full logs, charts, and analysis on W\&B:
-[Experiment Dashboard](https://wandb.ai/shivasinghbagri/ae_test_v2/runs/qt1yyhwg?nw=nwusershivasinghbagri)
-Benchmarking of different Models
-[Github](github.com/autobot37/weatherforecasting-benchmarking)
+[Experiment Dashboard](https://wandb.ai/shivasinghbagri/ae_test_v2/runs/qt1yyhwg?nw=nwusershivasinghbagri)  
+
+Benchmarking of different Models  [Github](github.com/autobot37/weatherforecasting-benchmarking)
+
 ---
